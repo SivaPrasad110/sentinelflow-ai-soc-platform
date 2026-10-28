@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { IncidentsController } from './incidents.controller';
 import { IncidentsService } from './incidents.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { N8nIntegrationService } from '../n8n/n8n.service';
 import { NotFoundException } from '@nestjs/common';
 import { Severity, IncidentStatus, Role } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/decorators/current-user.decorator';
@@ -10,6 +11,7 @@ describe('IncidentsController & IncidentsService (Scoped Multi-Tenancy)', () => 
   let controller: IncidentsController;
   let service: IncidentsService;
   let prismaMock: any;
+  let n8nMock: any;
 
   const currentOrgId = 'org-cyberdefense-001';
   const foreignOrgId = 'org-secops-002';
@@ -108,6 +110,51 @@ describe('IncidentsController & IncidentsService (Scoped Multi-Tenancy)', () => 
       },
     };
 
+    n8nMock = {
+      triggerTriage: jest.fn().mockImplementation((incidentId, orgId) => {
+        if (incidentId === 'INC-2026-FOREIGN') {
+          throw new NotFoundException('Incident not found in your organization.');
+        }
+        return Promise.resolve({
+          id: 'ANALYSIS-001',
+          incidentId,
+          organizationId: orgId,
+          status: 'COMPLETED',
+          eventId: 'evt-1234',
+          summary: 'PowerShell lateral movement detected',
+          severityAssessment: 'CRITICAL',
+          confidence: 0.95,
+          evidence: ['PowerShell encoded command'],
+          recommendedActions: ['Isolate host'],
+          missingInformation: [],
+          requiresHumanReview: true,
+          createdAt: new Date().toISOString(),
+        });
+      }),
+      getIncidentAnalyses: jest.fn().mockImplementation((incidentId, orgId) => {
+        if (incidentId === 'INC-2026-FOREIGN') {
+          throw new NotFoundException('Incident not found in your organization.');
+        }
+        return Promise.resolve([
+          {
+            id: 'ANALYSIS-001',
+            incidentId,
+            organizationId: orgId,
+            status: 'COMPLETED',
+            eventId: 'evt-1234',
+            summary: 'PowerShell lateral movement detected',
+            severityAssessment: 'CRITICAL',
+            confidence: 0.95,
+            evidence: ['PowerShell encoded command'],
+            recommendedActions: ['Isolate host'],
+            missingInformation: [],
+            requiresHumanReview: true,
+            createdAt: new Date().toISOString(),
+          },
+        ]);
+      }),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       controllers: [IncidentsController],
       providers: [
@@ -115,6 +162,10 @@ describe('IncidentsController & IncidentsService (Scoped Multi-Tenancy)', () => 
         {
           provide: PrismaService,
           useValue: prismaMock,
+        },
+        {
+          provide: N8nIntegrationService,
+          useValue: n8nMock,
         },
       ],
     }).compile();
@@ -194,6 +245,39 @@ describe('IncidentsController & IncidentsService (Scoped Multi-Tenancy)', () => 
     it('should prevent deleting foreign organization incident', async () => {
       await expect(
         controller.delete('INC-2026-FOREIGN', currentOrgId),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('n8n AI Incident Triage Integration', () => {
+    it('should trigger AI triage for an incident in the authorized organization', async () => {
+      const analysis = await controller.analyze('INC-2026-001', currentOrgId, mockAnalyst);
+      expect(analysis).toBeDefined();
+      expect(analysis.status).toBe('COMPLETED');
+      expect(analysis.severityAssessment).toBe('CRITICAL');
+      expect(n8nMock.triggerTriage).toHaveBeenCalledWith(
+        'INC-2026-001',
+        currentOrgId,
+        mockAnalyst.id,
+      );
+    });
+
+    it('should reject triage request for cross-tenant foreign organization incident', async () => {
+      await expect(
+        controller.analyze('INC-2026-FOREIGN', currentOrgId, mockAnalyst),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should retrieve analysis history for an incident within the organization', async () => {
+      const history = await controller.getAnalyses('INC-2026-001', currentOrgId);
+      expect(history).toHaveLength(1);
+      expect(history[0].id).toBe('ANALYSIS-001');
+      expect(n8nMock.getIncidentAnalyses).toHaveBeenCalledWith('INC-2026-001', currentOrgId);
+    });
+
+    it('should reject retrieving analysis history for cross-tenant incident', async () => {
+      await expect(
+        controller.getAnalyses('INC-2026-FOREIGN', currentOrgId),
       ).rejects.toThrow(NotFoundException);
     });
   });

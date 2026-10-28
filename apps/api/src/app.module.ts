@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module';
 import { HealthModule } from './health/health.module';
 import { IncidentsModule } from './incidents/incidents.module';
 import { AlertsModule } from './alerts/alerts.module';
+import { N8nIntegrationModule } from './n8n/n8n.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { AlertsModule } from './alerts/alerts.module';
     HealthModule,
     IncidentsModule,
     AlertsModule,
+    N8nIntegrationModule,
   ],
   providers: [
     {

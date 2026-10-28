@@ -87,9 +87,69 @@ export interface Incident {
   sourceAlertIds: string[];
   iocs: IndicatorOfCompromise[];
   aiAnalysis?: AIAnalysisResult;
+  analyses?: IncidentAnalysisRecord[];
   assignedTo?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export type AnalysisStatus = 'PENDING' | 'COMPLETED' | 'FAILED';
+
+export type TriageSeverityAssessment =
+  | 'informational'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'critical'
+  | AlertSeverity;
+
+export interface N8nTriageResponseData {
+  summary: string;
+  severity_assessment: TriageSeverityAssessment;
+  confidence: number;
+  evidence: string[];
+  potential_impact: string;
+  recommended_actions: string[];
+  missing_information: string[];
+  requires_human_review: boolean;
+}
+
+export interface IncidentAnalysisRecord {
+  id: string;
+  incidentId: string;
+  organizationId: string;
+  status: AnalysisStatus;
+  eventId: string;
+  workflowId?: string;
+  executionId?: string;
+  model?: string;
+  summary?: string;
+  severityAssessment?: string;
+  confidence?: number;
+  evidence: string[];
+  potentialImpact?: string;
+  recommendedActions: string[];
+  missingInformation: string[];
+  requiresHumanReview: boolean;
+  errorMessage?: string;
+  durationMs?: number;
+  triggeredById?: string;
+  createdAt: string;
+  completedAt?: string;
+}
+
+export interface N8nTriageRequestPayload {
+  eventId: string;
+  incidentId: string;
+  title: string;
+  description: string;
+  severity: AlertSeverity;
+  status: IncidentStatus;
+  organizationId: string;
+  iocs: Array<{ type: IOCType; value: string; threatScore?: number }>;
+  detectedAlertsCount: number;
+  detectedAlertsSummary?: Array<{ title: string; source: string; severity: AlertSeverity }>;
+  timestamp: string;
 }
 
 export interface WorkflowAutomationTrigger {
@@ -118,6 +178,6 @@ export interface SystemHealthResponse {
   services: {
     api: 'healthy' | 'unhealthy';
     database: 'connected' | 'disconnected' | 'unconfigured';
-    n8n: 'connected' | 'disconnected' | 'unconfigured';
+    n8n: 'connected' | 'reachable' | 'unreachable' | 'configured' | 'unconfigured';
   };
 }

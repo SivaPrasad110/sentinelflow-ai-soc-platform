@@ -70,7 +70,19 @@ export function Navbar({ health, onRefresh, isLoading }: NavbarProps) {
           <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded bg-slate-800/80 border border-slate-700">
             <Workflow className="w-3.5 h-3.5 text-purple-400" />
             <span className="text-slate-400">n8n:</span>
-            <span className="text-purple-400 font-semibold">{health?.services.n8n || 'Integrated'}</span>
+            <span
+              className={`font-semibold capitalize ${
+                health?.services.n8n === 'reachable' || health?.services.n8n === 'connected'
+                  ? 'text-emerald-400'
+                  : health?.services.n8n === 'configured'
+                  ? 'text-amber-400'
+                  : health?.services.n8n === 'unreachable'
+                  ? 'text-rose-400'
+                  : 'text-slate-400'
+              }`}
+            >
+              {health?.services.n8n || 'Configured'}
+            </span>
           </div>
         </div>
 

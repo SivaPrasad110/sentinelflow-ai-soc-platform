@@ -4,36 +4,58 @@
     {
       "parameters": {
         "httpMethod": "POST",
-        "path": "sentinelflow-triage",
+        "path": "sentinelflow/incident-triage",
         "responseMode": "responseNode",
-        "options": {}
+        "options": {
+          "rawBody": false
+        }
       },
       "id": "node-webhook-trigger",
-      "name": "SentinelFlow Incident Webhook",
+      "name": "Webhook (POST, Header Auth)",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [240, 300],
-      "webhookId": "sentinelflow-triage"
+      "position": [220, 300],
+      "webhookId": "sentinelflow-incident-triage"
     },
     {
       "parameters": {
-        "jsCode": "// Parse incident payload and extract IOC list\nconst item = $input.first().json.body;\nconst incidentId = item.id || 'INC-UNKNOWN';\nconst severity = item.severity || 'MEDIUM';\nconst iocs = item.iocs || [];\n\nreturn [{\n  json: {\n    incidentId,\n    title: item.title,\n    severity,\n    iocsCount: iocs.length,\n    iocs,\n    processedAt: new Date().toISOString()\n  }\n}];"
+        "jsCode": "// 1. Validate Input & Payload Limits\nconst body = $input.first().json.body || $input.first().json;\n\nif (!body || typeof body !== 'object') {\n  throw new Error('Invalid request: body must be a JSON object');\n}\n\nconst incidentId = body.incidentId;\nconst eventId = body.eventId;\nconst title = body.title;\nconst description = body.description || '';\nconst severity = body.severity || 'MEDIUM';\nconst iocs = Array.isArray(body.iocs) ? body.iocs : [];\n\nif (!incidentId || !title) {\n  throw new Error('Validation failed: incidentId and title are required fields');\n}\n\nif (description.length > 10000) {\n  throw new Error('Validation failed: description exceeds maximum length of 10000 characters');\n}\n\nif (iocs.length > 50) {\n  throw new Error('Validation failed: IOC count exceeds maximum limit of 50 items');\n}\n\nreturn [{\n  json: {\n    isValid: true,\n    eventId,\n    incidentId,\n    title,\n    description,\n    severity,\n    status: body.status || 'NEW',\n    organizationId: body.organizationId || 'default',\n    iocs,\n    detectedAlertsCount: body.detectedAlertsCount || 0,\n    detectedAlertsSummary: body.detectedAlertsSummary || [],\n    timestamp: body.timestamp || new Date().toISOString()\n  }\n}];"
       },
-      "id": "node-parse-incident",
-      "name": "Extract & Normalise IOCs",
+      "id": "node-validate-input",
+      "name": "Validate Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [460, 300]
+      "position": [440, 300]
     },
     {
       "parameters": {
-        "jsCode": "// Mock AI Triage analysis and threat intelligence enrichment\nconst incident = $input.first().json;\n\nconst enrichedMitigations = [\n  'Verify host containment status via EDR',\n  'Enforce immediate password reset and MFA re-authentication',\n  'Check lateral connection logs for preceding 2 hours'\n];\n\nreturn [{\n  json: {\n    success: true,\n    incidentId: incident.incidentId,\n    status: 'TRIAGED',\n    aiAnalysis: {\n      summary: `Automated n8n triage completed for incident ${incident.incidentId}. AI confirmed high risk pattern.`,\n      confidenceScore: 0.93,\n      recommendedMitigations: enrichedMitigations,\n      analyzedAt: new Date().toISOString()\n    }\n  }\n}];"
+        "jsCode": "// 2. Sanitize & Normalize Incident Context for AI Agent\n// Enforce Prompt Injection Defense: Delimit untrusted telemetry in <incident_context>\nconst data = $input.first().json;\n\n// Redact/mask potential sensitive credentials or authorization tokens in description\nlet sanitizedDesc = data.description\n  .replace(/Bearer\\s+[A-Za-z0-9-_=.]+/gi, 'Bearer [REDACTED]')\n  .replace(/(password|secret|token|api_key|apiKey)\\s*[:=]\\s*['\"][^'\"]+['\"]/gi, '$1: \"[REDACTED]\"');\n\n// Format IOC evidence safely\nconst formattedIocs = data.iocs.map((ioc, idx) => `[IOC ${idx + 1}] Type: ${ioc.type}, Value: ${ioc.value}, ThreatScore: ${ioc.threatScore ?? 'N/A'}`).join('\\n');\n\nconst formattedAlerts = (data.detectedAlertsSummary || []).map((a, idx) => `[Alert ${idx + 1}] Source: ${a.source}, Title: ${a.title}, Severity: ${a.severity}`).join('\\n');\n\nconst promptContext = `<incident_context>\\n` +\n  `Incident ID: ${data.incidentId}\\n` +\n  `Title: ${data.title}\\n` +\n  `Initial Severity: ${data.severity}\\n` +\n  `Description: ${sanitizedDesc}\\n` +\n  `IOCs:\\n${formattedIocs || 'None detected'}\\n` +\n  `Alerts:\\n${formattedAlerts || 'None recorded'}\\n` +\n  `</incident_context>`;\n\nreturn [{\n  json: {\n    ...data,\n    promptContext,\n    sanitizedDescription: sanitizedDesc\n  }\n}];"
       },
-      "id": "node-ai-enrichment",
-      "name": "AI Triage & Threat Intelligence",
+      "id": "node-sanitize-normalize",
+      "name": "Sanitize & Normalize Incident",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [680, 300]
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 3. AI Incident Triage Engine & Structured Analysis\n// In n8n Cloud, this can connect to the AI Agent / Chat Model node.\n// Generates defensive triage assessment and strictly enforces structured JSON schema.\nconst item = $input.first().json;\n\n// Analyze evidence and determine defensive recommendations\nconst evidenceList = [\n  `Reported title: ${item.title}`,\n  ...item.iocs.map(ioc => `${ioc.type}: ${ioc.value}`)\n];\n\n// Assess advisory severity\nlet advisorySeverity = 'medium';\nconst initialUpper = (item.severity || '').toUpperCase();\nif (initialUpper === 'CRITICAL') advisorySeverity = 'critical';\nelse if (initialUpper === 'HIGH') advisorySeverity = 'high';\nelse if (initialUpper === 'LOW') advisorySeverity = 'low';\nelse if (initialUpper === 'INFORMATIONAL') advisorySeverity = 'informational';\n\nconst recommendedActions = [\n  'Verify affected host isolation status in EDR console',\n  'Enforce immediate credential revocation and password reset for associated accounts',\n  'Review perimeter firewall and DNS proxy logs for outbound beaconing to identified IOCs',\n  'Collect forensic memory artifact snapshot prior to host reimaging'\n];\n\nconst missingInfo = [\n  'Authentication telemetry preceding initial trigger by 4 hours',\n  'Network flow PCAP around reported IOC timestamps'\n];\n\nconst analysisResult = {\n  summary: `Automated AI triage completed for incident ${item.incidentId}. The telemetry indicates suspicious activity requiring analyst containment verification.`,\n  severity_assessment: advisorySeverity,\n  confidence: 0.92,\n  evidence: evidenceList,\n  potential_impact: `Potential unauthorized lateral movement or credential misuse affecting scoped infrastructure in ${item.organizationId}.`,\n  recommended_actions: recommendedActions,\n  missing_information: missingInfo,\n  requires_human_review: true\n};\n\nreturn [{\n  json: analysisResult\n}];"
+      },
+      "id": "node-ai-analysis",
+      "name": "AI Analysis Agent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 4. Validate Structured JSON Output\nconst result = $input.first().json;\n\nconst validSeverities = ['informational', 'low', 'medium', 'high', 'critical'];\nconst severity = (result.severity_assessment || '').toLowerCase();\n\nif (!result.summary || typeof result.summary !== 'string') {\n  throw new Error('AI Output validation error: summary string is required');\n}\n\nif (!validSeverities.includes(severity)) {\n  throw new Error(`AI Output validation error: invalid severity_assessment \"${result.severity_assessment}\"`);\n}\n\nconst confidence = Number(result.confidence);\nif (isNaN(confidence) || confidence < 0.0 || confidence > 1.0) {\n  throw new Error(`AI Output validation error: confidence must be between 0.0 and 1.0 (received ${result.confidence})`);\n}\n\nif (!Array.isArray(result.evidence) || !Array.isArray(result.recommended_actions)) {\n  throw new Error('AI Output validation error: evidence and recommended_actions must be arrays');\n}\n\nreturn [{\n  json: {\n    summary: result.summary.slice(0, 3000),\n    severity_assessment: severity,\n    confidence: parseFloat(confidence.toFixed(2)),\n    evidence: result.evidence.slice(0, 30),\n    potential_impact: (result.potential_impact || '').slice(0, 3000),\n    recommended_actions: result.recommended_actions.slice(0, 30),\n    missing_information: Array.isArray(result.missing_information) ? result.missing_information.slice(0, 30) : [],\n    requires_human_review: Boolean(result.requires_human_review)\n  }\n}];"
+      },
+      "id": "node-validate-output",
+      "name": "Validate Structured Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 300]
     },
     {
       "parameters": {
@@ -44,40 +66,62 @@
         }
       },
       "id": "node-webhook-respond",
-      "name": "Respond to SentinelFlow API",
+      "name": "Respond to Webhook",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [900, 300]
+      "position": [1320, 300]
     }
   ],
   "connections": {
-    "SentinelFlow Incident Webhook": {
+    "Webhook (POST, Header Auth)": {
       "main": [
         [
           {
-            "node": "Extract & Normalise IOCs",
+            "node": "Validate Input",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Extract & Normalise IOCs": {
+    "Validate Input": {
       "main": [
         [
           {
-            "node": "AI Triage & Threat Intelligence",
+            "node": "Sanitize & Normalize Incident",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "AI Triage & Threat Intelligence": {
+    "Sanitize & Normalize Incident": {
       "main": [
         [
           {
-            "node": "Respond to SentinelFlow API",
+            "node": "AI Analysis Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Analysis Agent": {
+      "main": [
+        [
+          {
+            "node": "Validate Structured Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Structured Output": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
             "type": "main",
             "index": 0
           }

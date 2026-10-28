@@ -118,3 +118,35 @@ export async function secureFetch(url: string, options: RequestInit = {}): Promi
 
   return response;
 }
+
+/**
+ * Trigger AI incident triage via n8n Cloud
+ */
+export async function triggerIncidentAnalysis(incidentId: string) {
+  const response = await secureFetch(`/api/v1/incidents/${incidentId}/analyze`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to analyze incident (HTTP ${response.status})`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Retrieve analysis history for an incident
+ */
+export async function getIncidentAnalyses(incidentId: string) {
+  const response = await secureFetch(`/api/v1/incidents/${incidentId}/analyses`, {
+    method: 'GET',
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to fetch incident analyses (HTTP ${response.status})`);
+  }
+
+  return response.json();
+}

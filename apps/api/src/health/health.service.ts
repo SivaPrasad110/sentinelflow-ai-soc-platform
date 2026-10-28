@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SystemHealthResponse } from '@sentinelflow/shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { N8nIntegrationService } from '../n8n/n8n.service';
 
 @Injectable()
 export class HealthService {
@@ -10,11 +11,12 @@ export class HealthService {
   constructor(
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly n8nService: N8nIntegrationService,
   ) {}
 
   async checkHealth(): Promise<SystemHealthResponse> {
-    const n8nUrl = this.configService.get<string>('N8N_WEBHOOK_URL');
     const isDbConnected = await this.prisma.isHealthy();
+    const n8nStatus = await this.n8nService.checkConnectivity();
 
     return {
       status: isDbConnected ? 'ok' : 'degraded',
@@ -25,7 +27,7 @@ export class HealthService {
       services: {
         api: 'healthy',
         database: isDbConnected ? 'connected' : 'disconnected',
-        n8n: n8nUrl ? 'connected' : 'unconfigured',
+        n8n: n8nStatus,
       },
     };
   }

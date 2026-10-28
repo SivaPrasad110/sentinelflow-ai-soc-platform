@@ -12,18 +12,22 @@ import {
   IncidentStatus as SharedIncidentStatus,
   IndicatorOfCompromise as SharedIOC,
   AIAnalysisResult,
+  IncidentAnalysisRecord,
+  AnalysisStatus,
 } from '@sentinelflow/shared';
 import {
   Incident as PrismaIncident,
   IndicatorOfCompromise as PrismaIOC,
   User as PrismaUser,
   SecurityAlert as PrismaAlert,
+  IncidentAnalysis as PrismaIncidentAnalysis,
 } from '@prisma/client';
 
 type IncidentWithRelations = PrismaIncident & {
   iocs: PrismaIOC[];
   alerts?: PrismaAlert[];
   assignedTo?: PrismaUser | null;
+  analyses?: PrismaIncidentAnalysis[];
 };
 
 @Injectable()
@@ -42,6 +46,30 @@ export class IncidentsService {
       createdAt: ioc.createdAt.toISOString(),
     }));
 
+    const analyses: IncidentAnalysisRecord[] | undefined = incident.analyses?.map((a) => ({
+      id: a.id,
+      incidentId: a.incidentId,
+      organizationId: a.organizationId,
+      status: a.status as AnalysisStatus,
+      eventId: a.eventId,
+      workflowId: a.workflowId || undefined,
+      executionId: a.executionId || undefined,
+      model: a.model || undefined,
+      summary: a.summary || undefined,
+      severityAssessment: a.severityAssessment || undefined,
+      confidence: a.confidence !== null ? a.confidence : undefined,
+      evidence: a.evidence || [],
+      potentialImpact: a.potentialImpact || undefined,
+      recommendedActions: a.recommendedActions || [],
+      missingInformation: a.missingInformation || [],
+      requiresHumanReview: a.requiresHumanReview,
+      errorMessage: a.errorMessage || undefined,
+      durationMs: a.durationMs || undefined,
+      triggeredById: a.triggeredById || undefined,
+      createdAt: a.createdAt.toISOString(),
+      completedAt: a.completedAt ? a.completedAt.toISOString() : undefined,
+    }));
+
     return {
       id: incident.id,
       title: incident.title,
@@ -52,6 +80,7 @@ export class IncidentsService {
       sourceAlertIds: (incident.alerts || []).map((a) => a.id),
       iocs,
       aiAnalysis: (incident.aiAnalysis as unknown as AIAnalysisResult) || undefined,
+      analyses,
       assignedTo: incident.assignedTo ? incident.assignedTo.name : undefined,
       createdAt: incident.createdAt.toISOString(),
       updatedAt: incident.updatedAt.toISOString(),
@@ -70,6 +99,9 @@ export class IncidentsService {
         iocs: true,
         alerts: true,
         assignedTo: true,
+        analyses: {
+          orderBy: { createdAt: 'desc' },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -90,6 +122,9 @@ export class IncidentsService {
         iocs: true,
         alerts: true,
         assignedTo: true,
+        analyses: {
+          orderBy: { createdAt: 'desc' },
+        },
       },
     });
 
@@ -135,6 +170,9 @@ export class IncidentsService {
         iocs: true,
         alerts: true,
         assignedTo: true,
+        analyses: {
+          orderBy: { createdAt: 'desc' },
+        },
       },
     });
 
@@ -173,6 +211,9 @@ export class IncidentsService {
         iocs: true,
         alerts: true,
         assignedTo: true,
+        analyses: {
+          orderBy: { createdAt: 'desc' },
+        },
       },
     });
 
