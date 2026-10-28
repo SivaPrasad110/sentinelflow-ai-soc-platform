@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import * as cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
@@ -10,10 +11,15 @@ async function bootstrap() {
   const port = process.env.PORT || 3000;
   const corsOrigin = process.env.CORS_ORIGIN || 'http://localhost:5173';
 
+  // Secure CORS with origin whitelisting & cookie credentials support
   app.enableCors({
     origin: corsOrigin,
     credentials: true,
+    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-organization-id', 'x-tenant-id'],
   });
+
+  app.use(cookieParser());
 
   app.useGlobalPipes(
     new ValidationPipe({
@@ -30,8 +36,9 @@ async function bootstrap() {
     .setTitle('SentinelFlow API')
     .setDescription('Production-oriented AI Security Operations Platform REST API')
     .setVersion('1.0.0')
+    .addTag('Authentication', 'Argon2id authentication, session management, and JWT tokens')
     .addTag('Health', 'System and external service health diagnostics')
-    .addTag('Incidents', 'Security incident management and triage')
+    .addTag('Incidents', 'Multi-tenant security incident management and triage')
     .addTag('Alerts', 'Security alert ingestion and processing')
     .addBearerAuth()
     .build();

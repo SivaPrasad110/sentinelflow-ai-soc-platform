@@ -1,7 +1,6 @@
 import {
   Injectable,
   NotFoundException,
-  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
@@ -13,18 +12,8 @@ import { SecurityAlert as PrismaAlert } from '@prisma/client';
 @Injectable()
 export class AlertsService {
   private readonly logger = new Logger(AlertsService.name);
-  private readonly defaultTenant = 'default-tenant';
 
   constructor(private readonly prisma: PrismaService) {}
-
-  private verifyTenantAccess(requestedTenantId?: string, userTenantId: string = this.defaultTenant): string {
-    const targetTenant = requestedTenantId || userTenantId;
-    if (targetTenant !== userTenantId && userTenantId !== 'system-admin-tenant') {
-      this.logger.warn(`Tenant authorization failure: attempted access to "${targetTenant}" from "${userTenantId}"`);
-      throw new ForbiddenException(`Unauthorized: cross-tenant access to "${targetTenant}" is denied.`);
-    }
-    return targetTenant;
-  }
 
   private mapToSharedAlert(alert: PrismaAlert): SharedAlert {
     return {
@@ -33,44 +22,53 @@ export class AlertsService {
       description: alert.description,
       severity: alert.severity as AlertSeverity,
       source: alert.source,
+      organizationId: alert.organizationId || alert.tenantId,
       rawEvent: (alert.rawPayload as Record<string, unknown>) || undefined,
       detectedAt: alert.detectedAt.toISOString(),
       createdAt: alert.createdAt.toISOString(),
     };
   }
 
-  async findAll(tenantId?: string): Promise<SharedAlert[]> {
-    const authorizedTenant = this.verifyTenantAccess(tenantId);
+  async findAll(organizationId: string): Promise<SharedAlert[]> {
     const alerts = await this.prisma.securityAlert.findMany({
-      where: { tenantId: authorizedTenant },
+      where: {
+        OR: [
+          { organizationId },
+          { tenantId: organizationId },
+        ],
+      },
       orderBy: { detectedAt: 'desc' },
     });
     return alerts.map((a) => this.mapToSharedAlert(a));
   }
 
-  async findById(id: string, tenantId?: string): Promise<SharedAlert> {
-    const authorizedTenant = this.verifyTenantAccess(tenantId);
+  async findById(id: string, organizationId: string): Promise<SharedAlert> {
     const alert = await this.prisma.securityAlert.findFirst({
-      where: { id, tenantId: authorizedTenant },
+      where: {
+        id,
+        OR: [
+          { organizationId },
+          { tenantId: organizationId },
+        ],
+      },
     });
 
     if (!alert) {
-      throw new NotFoundException(`Security Alert with ID "${id}" was not found.`);
+      throw new NotFoundException(`Security Alert with ID "${id}" was not found in your organization.`);
     }
 
     return this.mapToSharedAlert(alert);
   }
 
-  async ingest(dto: IngestAlertDto, tenantId?: string): Promise<SharedAlert> {
-    const authorizedTenant = this.verifyTenantAccess(dto.tenantId || tenantId);
-
+  async ingest(dto: IngestAlertDto, organizationId: string): Promise<SharedAlert> {
     const alert = await this.prisma.securityAlert.create({
       data: {
         title: dto.title,
         description: dto.description,
         severity: dto.severity || 'MEDIUM',
         source: dto.source,
-        tenantId: authorizedTenant,
+        organizationId,
+        tenantId: organizationId,
         incidentId: dto.incidentId,
         rawPayload: (dto.rawPayload as any) || undefined,
         detectedAt: dto.detectedAt ? new Date(dto.detectedAt) : new Date(),
@@ -80,9 +78,9 @@ export class AlertsService {
     return this.mapToSharedAlert(alert);
   }
 
-  async update(id: string, dto: UpdateAlertDto, tenantId?: string): Promise<SharedAlert> {
-    const authorizedTenant = this.verifyTenantAccess(tenantId);
-    await this.findById(id, authorizedTenant);
+  async update(id: string, dto: UpdateAlertDto, organizationId: string): Promise<SharedAlert> {
+    // Verify existence within authorized organization first to prevent IDOR
+    await this.findById(id, organizationId);
 
     const updated = await this.prisma.securityAlert.update({
       where: { id },

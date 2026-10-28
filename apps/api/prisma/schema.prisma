@@ -35,39 +35,94 @@ enum IOCType {
   EMAIL
 }
 
+enum Role {
+  ADMIN
+  ANALYST
+  VIEWER
+}
+
 enum UserRole {
   ANALYST
   SOC_LEAD
   ADMIN
 }
 
+model Organization {
+  id          String                   @id @default(uuid())
+  name        String
+  slug        String                   @unique
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+  memberships OrganizationMembership[]
+  incidents   Incident[]
+  alerts      SecurityAlert[]
+}
+
+model OrganizationMembership {
+  id             String       @id @default(uuid())
+  userId         String
+  organizationId String
+  role           Role         @default(ANALYST)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([userId])
+  @@index([organizationId])
+}
+
 model User {
-  id        String     @id @default(uuid())
-  email     String     @unique
-  name      String
-  role      UserRole   @default(ANALYST)
-  tenantId  String     @default("default-tenant")
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
-  incidents Incident[]
+  id              String                   @id @default(uuid())
+  email           String                   @unique
+  name            String
+  passwordHash    String?
+  role            UserRole                 @default(ANALYST)
+  tenantId        String                   @default("default-tenant")
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+  incidents       Incident[]
+  memberships     OrganizationMembership[]
+  refreshSessions RefreshSession[]
 
   @@index([tenantId])
 }
 
+model RefreshSession {
+  id         String    @id @default(uuid())
+  userId     String
+  tokenHash  String    @unique
+  userAgent  String?
+  ipAddress  String?
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+}
+
 model SecurityAlert {
-  id          String    @id @default(uuid())
-  title       String
-  description String
-  severity    Severity  @default(MEDIUM)
-  source      String
-  rawPayload  Json?
-  tenantId    String    @default("default-tenant")
-  detectedAt  DateTime  @default(now())
-  createdAt   DateTime  @default(now())
-  incidentId  String?
-  incident    Incident? @relation(fields: [incidentId], references: [id], onDelete: SetNull)
+  id             String        @id @default(uuid())
+  title          String
+  description    String
+  severity       Severity      @default(MEDIUM)
+  source         String
+  rawPayload     Json?
+  tenantId       String        @default("default-tenant")
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  detectedAt     DateTime      @default(now())
+  createdAt      DateTime      @default(now())
+  incidentId     String?
+  incident       Incident?     @relation(fields: [incidentId], references: [id], onDelete: SetNull)
 
   @@index([tenantId])
+  @@index([organizationId])
   @@index([severity])
   @@index([incidentId])
   @@index([detectedAt])
@@ -80,6 +135,8 @@ model Incident {
   severity           Severity                @default(MEDIUM)
   status             IncidentStatus          @default(NEW)
   tenantId           String                  @default("default-tenant")
+  organizationId     String?
+  organization       Organization?           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   assignedToId       String?
   assignedTo         User?                   @relation(fields: [assignedToId], references: [id], onDelete: SetNull)
   alerts             SecurityAlert[]
@@ -93,6 +150,7 @@ model Incident {
   workflowExecutions WorkflowExecutionLog[]
 
   @@index([tenantId])
+  @@index([organizationId])
   @@index([status])
   @@index([severity])
   @@index([createdAt])

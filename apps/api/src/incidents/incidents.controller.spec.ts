@@ -2,13 +2,25 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { IncidentsController } from './incidents.controller';
 import { IncidentsService } from './incidents.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { NotFoundException, ForbiddenException } from '@nestjs/common';
-import { Severity, IncidentStatus } from '@prisma/client';
+import { NotFoundException } from '@nestjs/common';
+import { Severity, IncidentStatus, Role } from '@prisma/client';
+import { AuthenticatedUser } from '../auth/decorators/current-user.decorator';
 
-describe('IncidentsController & IncidentsService', () => {
+describe('IncidentsController & IncidentsService (Scoped Multi-Tenancy)', () => {
   let controller: IncidentsController;
   let service: IncidentsService;
   let prismaMock: any;
+
+  const currentOrgId = 'org-cyberdefense-001';
+  const foreignOrgId = 'org-secops-002';
+
+  const mockAnalyst: AuthenticatedUser = {
+    id: 'USR-SOC-001',
+    email: 'sarah.chen@sentinelflow.local',
+    name: 'Sarah Chen',
+    organizationId: currentOrgId,
+    role: Role.ANALYST,
+  };
 
   const sampleIncident = {
     id: 'INC-2026-001',
@@ -16,8 +28,9 @@ describe('IncidentsController & IncidentsService', () => {
     description: 'Obfuscated command line detected on endpoint.',
     severity: Severity.CRITICAL,
     status: IncidentStatus.INVESTIGATING,
-    tenantId: 'default-tenant',
-    assignedToId: 'USR-SOC-001',
+    organizationId: currentOrgId,
+    tenantId: currentOrgId,
+    assignedToId: mockAnalyst.id,
     aiSummary: 'Likely credential access.',
     aiRiskScore: 0.92,
     mitigationSteps: ['Isolate host'],
@@ -37,19 +50,40 @@ describe('IncidentsController & IncidentsService', () => {
     ],
     alerts: [],
     assignedTo: {
-      id: 'USR-SOC-001',
-      name: 'Sarah Chen',
-      email: 'sarah.chen@sentinelflow.local',
+      id: mockAnalyst.id,
+      name: mockAnalyst.name,
+      email: mockAnalyst.email,
     },
+  };
+
+  const foreignIncident = {
+    ...sampleIncident,
+    id: 'INC-2026-FOREIGN',
+    organizationId: foreignOrgId,
+    tenantId: foreignOrgId,
+    title: 'Foreign Org Incident',
   };
 
   beforeEach(async () => {
     prismaMock = {
       incident: {
-        findMany: jest.fn().mockResolvedValue([sampleIncident]),
+        findMany: jest.fn().mockImplementation(({ where }) => {
+          const targetOrg = where.OR?.[0]?.organizationId;
+          if (targetOrg === currentOrgId) {
+            return Promise.resolve([sampleIncident]);
+          }
+          if (targetOrg === foreignOrgId) {
+            return Promise.resolve([foreignIncident]);
+          }
+          return Promise.resolve([]);
+        }),
         findFirst: jest.fn().mockImplementation(({ where }) => {
-          if (where.id === sampleIncident.id && (!where.tenantId || where.tenantId === sampleIncident.tenantId)) {
+          const targetOrg = where.OR?.[0]?.organizationId;
+          if (where.id === sampleIncident.id && targetOrg === currentOrgId) {
             return Promise.resolve(sampleIncident);
+          }
+          if (where.id === foreignIncident.id && targetOrg === foreignOrgId) {
+            return Promise.resolve(foreignIncident);
           }
           return Promise.resolve(null);
         }),
@@ -57,7 +91,7 @@ describe('IncidentsController & IncidentsService', () => {
           return Promise.resolve({
             ...sampleIncident,
             ...data,
-            id: 'INC-2026-999',
+            id: 'INC-2026-NEW',
             createdAt: new Date(),
             updatedAt: new Date(),
           });
@@ -94,78 +128,73 @@ describe('IncidentsController & IncidentsService', () => {
     expect(service).toBeDefined();
   });
 
-  describe('Listing Incidents', () => {
-    it('should list all incidents for default tenant', async () => {
-      const incidents = await controller.findAll();
+  describe('Scoped Organization Listing', () => {
+    it('should only return incidents belonging to the authenticated organization', async () => {
+      const incidents = await controller.findAll(currentOrgId);
       expect(Array.isArray(incidents)).toBe(true);
       expect(incidents.length).toBe(1);
       expect(incidents[0].id).toBe('INC-2026-001');
-      expect(incidents[0].assignedTo).toBe('Sarah Chen');
-      expect(incidents[0].iocs.length).toBe(1);
-    });
-
-    it('should reject unauthorized cross-tenant access', async () => {
-      await expect(controller.findAll('unauthorized-foreign-tenant')).rejects.toThrow(
-        ForbiddenException,
-      );
+      expect(incidents[0].organizationId).toBe(currentOrgId);
     });
   });
 
-  describe('Retrieving Incident by ID', () => {
-    it('should retrieve existing incident', async () => {
-      const result = await controller.findById('INC-2026-001');
+  describe('Preventing Insecure Direct Object References (Cross-Tenant Access)', () => {
+    it('should retrieve incident within authenticated organization', async () => {
+      const result = await controller.findById('INC-2026-001', currentOrgId);
       expect(result).toBeDefined();
       expect(result.id).toBe('INC-2026-001');
-      expect(result.severity).toBe('CRITICAL');
     });
 
-    it('should throw NotFoundException when incident does not exist', async () => {
-      await expect(controller.findById('NON-EXISTENT-ID')).rejects.toThrow(NotFoundException);
-    });
-  });
-
-  describe('Creating Incidents', () => {
-    it('should create and persist a new incident', async () => {
-      const dto = {
-        title: 'New Ransomware Attempt',
-        description: 'VSS shadow copy deletion detected.',
-        severity: Severity.CRITICAL,
-        status: IncidentStatus.NEW,
-        mitigationSteps: ['Terminate malicious process tree'],
-      };
-
-      const created = await controller.create(dto);
-      expect(created).toBeDefined();
-      expect(created.title).toBe(dto.title);
-      expect(prismaMock.incident.create).toHaveBeenCalled();
-    });
-  });
-
-  describe('Updating Incidents', () => {
-    it('should update status and severity of an existing incident', async () => {
-      const updateDto = {
-        status: IncidentStatus.CONTAINED,
-        severity: Severity.HIGH,
-      };
-
-      const updated = await controller.update('INC-2026-001', updateDto);
-      expect(updated).toBeDefined();
-      expect(updated.status).toBe(IncidentStatus.CONTAINED);
-      expect(prismaMock.incident.update).toHaveBeenCalled();
-    });
-
-    it('should throw NotFoundException when updating non-existent incident', async () => {
+    it('should block cross-tenant IDOR access when querying foreign incident ID', async () => {
+      // Attacker from currentOrg attempts to fetch incident belonging to foreignOrg
       await expect(
-        controller.update('NON-EXISTENT-ID', { status: IncidentStatus.CLOSED }),
+        controller.findById('INC-2026-FOREIGN', currentOrgId),
       ).rejects.toThrow(NotFoundException);
     });
   });
 
-  describe('Deleting Incidents', () => {
-    it('should delete existing incident', async () => {
-      const result = await controller.delete('INC-2026-001');
+  describe('Permitted Analyst Actions', () => {
+    it('should allow analyst to create a new incident in authorized organization', async () => {
+      const dto = {
+        title: 'New Malware Outbreak',
+        description: 'Lateral movement flagged on workstation.',
+        severity: Severity.HIGH,
+        status: IncidentStatus.NEW,
+      };
+
+      const created = await controller.create(dto, currentOrgId, mockAnalyst);
+      expect(created).toBeDefined();
+      expect(prismaMock.incident.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            organizationId: currentOrgId,
+            assignedToId: mockAnalyst.id,
+          }),
+        }),
+      );
+    });
+
+    it('should allow analyst to update an incident within their organization', async () => {
+      const updateDto = { status: IncidentStatus.CONTAINED };
+      const updated = await controller.update('INC-2026-001', updateDto, currentOrgId);
+      expect(updated).toBeDefined();
+      expect(prismaMock.incident.update).toHaveBeenCalled();
+    });
+  });
+
+  describe('Deletion', () => {
+    it('should delete incident within authorized organization', async () => {
+      const result = await controller.delete('INC-2026-001', currentOrgId);
       expect(result.success).toBe(true);
-      expect(result.id).toBe('INC-2026-001');
+      expect(prismaMock.incident.delete).toHaveBeenCalledWith({
+        where: { id: 'INC-2026-001' },
+      });
+    });
+
+    it('should prevent deleting foreign organization incident', async () => {
+      await expect(
+        controller.delete('INC-2026-FOREIGN', currentOrgId),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 });

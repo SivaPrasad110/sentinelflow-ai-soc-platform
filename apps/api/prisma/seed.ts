@@ -1,39 +1,136 @@
-import { PrismaClient, Severity, IncidentStatus, IOCType, UserRole } from '@prisma/client';
+import { PrismaClient, Severity, IncidentStatus, IOCType, Role, UserRole } from '@prisma/client';
+import * as argon2 from 'argon2';
 
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log('🌱 Starting SentinelFlow database seed...');
+  console.log('🌱 Starting SentinelFlow Phase 2 database seed with Auth & RBAC...');
 
-  // 1. Create / Upsert Default SOC Analyst User
+  // 1. Create / Upsert Organizations
+  const primaryOrg = await prisma.organization.upsert({
+    where: { slug: 'cyberdefense-soc' },
+    update: {},
+    create: {
+      id: 'org-cyberdefense-001',
+      name: 'CyberDefense SOC Operations',
+      slug: 'cyberdefense-soc',
+    },
+  });
+
+  const secondaryOrg = await prisma.organization.upsert({
+    where: { slug: 'secops-global' },
+    update: {},
+    create: {
+      id: 'org-secops-002',
+      name: 'SecOps Global Isolated Tenant',
+      slug: 'secops-global',
+    },
+  });
+
+  // 2. Hash Passwords using Argon2id
+  const adminPasswordHash = await argon2.hash('AdminPassword123!', { type: argon2.argon2id });
+  const analystPasswordHash = await argon2.hash('AnalystPassword123!', { type: argon2.argon2id });
+  const viewerPasswordHash = await argon2.hash('ViewerPassword123!', { type: argon2.argon2id });
+  const foreignPasswordHash = await argon2.hash('ForeignPassword123!', { type: argon2.argon2id });
+
+  // 3. Create Users
+  const admin = await prisma.user.upsert({
+    where: { email: 'admin@sentinelflow.local' },
+    update: { passwordHash: adminPasswordHash },
+    create: {
+      id: 'USR-ADMIN-001',
+      email: 'admin@sentinelflow.local',
+      name: 'Platform Administrator',
+      passwordHash: adminPasswordHash,
+      role: UserRole.ADMIN,
+      tenantId: primaryOrg.id,
+    },
+  });
+
   const analyst = await prisma.user.upsert({
     where: { email: 'sarah.chen@sentinelflow.local' },
-    update: {},
+    update: { passwordHash: analystPasswordHash },
     create: {
       id: 'USR-SOC-001',
       email: 'sarah.chen@sentinelflow.local',
-      name: 'Sarah Chen',
+      name: 'Sarah Chen (Lead Analyst)',
+      passwordHash: analystPasswordHash,
       role: UserRole.SOC_LEAD,
-      tenantId: 'default-tenant',
+      tenantId: primaryOrg.id,
     },
   });
 
-  const cloudAnalyst = await prisma.user.upsert({
-    where: { email: 'alex.rivera@sentinelflow.local' },
-    update: {},
+  const viewer = await prisma.user.upsert({
+    where: { email: 'viewer@sentinelflow.local' },
+    update: { passwordHash: viewerPasswordHash },
     create: {
-      id: 'USR-SOC-002',
-      email: 'alex.rivera@sentinelflow.local',
-      name: 'Alex Rivera',
+      id: 'USR-VIEWER-001',
+      email: 'viewer@sentinelflow.local',
+      name: 'Auditor Viewer',
+      passwordHash: viewerPasswordHash,
       role: UserRole.ANALYST,
-      tenantId: 'default-tenant',
+      tenantId: primaryOrg.id,
     },
   });
 
-  // 2. Upsert Sample Incidents
+  const foreignUser = await prisma.user.upsert({
+    where: { email: 'foreign.user@secops.local' },
+    update: { passwordHash: foreignPasswordHash },
+    create: {
+      id: 'USR-FOREIGN-001',
+      email: 'foreign.user@secops.local',
+      name: 'Foreign Org User',
+      passwordHash: foreignPasswordHash,
+      role: UserRole.ADMIN,
+      tenantId: secondaryOrg.id,
+    },
+  });
+
+  // 4. Create Organization Memberships
+  await prisma.organizationMembership.upsert({
+    where: { userId_organizationId: { userId: admin.id, organizationId: primaryOrg.id } },
+    update: { role: Role.ADMIN },
+    create: {
+      userId: admin.id,
+      organizationId: primaryOrg.id,
+      role: Role.ADMIN,
+    },
+  });
+
+  await prisma.organizationMembership.upsert({
+    where: { userId_organizationId: { userId: analyst.id, organizationId: primaryOrg.id } },
+    update: { role: Role.ANALYST },
+    create: {
+      userId: analyst.id,
+      organizationId: primaryOrg.id,
+      role: Role.ANALYST,
+    },
+  });
+
+  await prisma.organizationMembership.upsert({
+    where: { userId_organizationId: { userId: viewer.id, organizationId: primaryOrg.id } },
+    update: { role: Role.VIEWER },
+    create: {
+      userId: viewer.id,
+      organizationId: primaryOrg.id,
+      role: Role.VIEWER,
+    },
+  });
+
+  await prisma.organizationMembership.upsert({
+    where: { userId_organizationId: { userId: foreignUser.id, organizationId: secondaryOrg.id } },
+    update: { role: Role.ADMIN },
+    create: {
+      userId: foreignUser.id,
+      organizationId: secondaryOrg.id,
+      role: Role.ADMIN,
+    },
+  });
+
+  // 5. Upsert Incidents for Primary Org
   const inc1 = await prisma.incident.upsert({
     where: { id: 'INC-2026-001' },
-    update: {},
+    update: { organizationId: primaryOrg.id },
     create: {
       id: 'INC-2026-001',
       title: 'Suspicious PowerShell Execution & EDR Evasion',
@@ -41,10 +138,10 @@ async function main() {
         'Endpoint telemetry flagged obfuscated PowerShell command executing base64 payload matching Mimikatz signatures on workstation WS-FIN-04.',
       severity: Severity.CRITICAL,
       status: IncidentStatus.INVESTIGATING,
-      tenantId: 'default-tenant',
+      tenantId: primaryOrg.id,
+      organizationId: primaryOrg.id,
       assignedToId: analyst.id,
-      aiSummary:
-        'High-confidence credential dumping attempt following initial access via spear-phishing attachment.',
+      aiSummary: 'High-confidence credential dumping attempt following initial access via spear-phishing attachment.',
       aiRiskScore: 0.94,
       mitigationSteps: [
         'Isolate host WS-FIN-04 via EDR agent',
@@ -52,8 +149,7 @@ async function main() {
         'Block egress communication to 198.51.100.42 at perimeter firewall',
       ],
       aiAnalysis: {
-        summary:
-          'High-confidence credential dumping attempt following initial access via spear-phishing attachment.',
+        summary: 'High-confidence credential dumping attempt following initial access via spear-phishing attachment.',
         riskAssessment: 'Critical risk of lateral movement across internal corporate subnet within next 30 minutes.',
         recommendedMitigations: [
           'Isolate host WS-FIN-04 via EDR agent',
@@ -89,105 +185,28 @@ async function main() {
     },
   });
 
-  const inc2 = await prisma.incident.upsert({
-    where: { id: 'INC-2026-002' },
-    update: {},
+  // Upsert Incident for Secondary (Foreign) Org to verify cross-tenant boundaries
+  await prisma.incident.upsert({
+    where: { id: 'INC-2026-FOREIGN' },
+    update: { organizationId: secondaryOrg.id },
     create: {
-      id: 'INC-2026-002',
-      title: 'Anomalous Cloud API Invocations from Foreign ASN',
-      description:
-        'IAM user prod-deployer invoked DescribeInstances and GetSecretValue from unrecognized IP range in AS13335 outside normal deployment window.',
+      id: 'INC-2026-FOREIGN',
+      title: 'Foreign Org Isolated Incident',
+      description: 'Confidential security event restricted to SecOps Global.',
       severity: Severity.HIGH,
-      status: IncidentStatus.TRIAGED,
-      tenantId: 'default-tenant',
-      assignedToId: cloudAnalyst.id,
-      aiSummary: 'Potential long-lived AWS IAM access key compromise. Secret exfiltration attempt detected.',
-      aiRiskScore: 0.88,
-      mitigationSteps: [
-        'Deactivate compromised IAM access key prod-deployer-ak-02',
-        'Audit AWS CloudTrail events for preceding 24 hours',
-        'Rotate all production secrets accessed during the anomalous session',
-      ],
-      aiAnalysis: {
-        summary: 'Potential long-lived AWS IAM access key compromise. Secret exfiltration attempt detected.',
-        riskAssessment: 'High risk of unauthorized production infrastructure access.',
-        recommendedMitigations: [
-          'Deactivate compromised IAM access key prod-deployer-ak-02',
-          'Audit AWS CloudTrail events for preceding 24 hours',
-          'Rotate all production secrets accessed during the anomalous session',
-        ],
-        confidenceScore: 0.88,
-        analyzedAt: new Date(Date.now() - 3600000).toISOString(),
-        modelUsed: 'SentinelFlow-SecurityLLM-v2',
-      },
-      createdAt: new Date(Date.now() - 5400000),
-      updatedAt: new Date(Date.now() - 3600000),
-      iocs: {
-        create: [
-          {
-            id: 'IOC-003',
-            type: IOCType.IP,
-            value: '203.0.113.88',
-            threatScore: 78,
-            enrichedData: { asn: 'AS13335', isp: 'CloudFlare proxy' },
-            createdAt: new Date(Date.now() - 5400000),
-          },
-        ],
-      },
+      status: IncidentStatus.NEW,
+      tenantId: secondaryOrg.id,
+      organizationId: secondaryOrg.id,
+      assignedToId: foreignUser.id,
+      createdAt: new Date(Date.now() - 1000000),
+      updatedAt: new Date(Date.now() - 1000000),
     },
   });
 
-  const inc3 = await prisma.incident.upsert({
-    where: { id: 'INC-2026-003' },
-    update: {},
-    create: {
-      id: 'INC-2026-003',
-      title: 'Repeated Password Spraying on SSO Gateway',
-      description:
-        'Over 4,500 authentication failures recorded against Okta SSO endpoint across 120 unique user accounts over 10 minutes.',
-      severity: Severity.MEDIUM,
-      status: IncidentStatus.CONTAINED,
-      tenantId: 'default-tenant',
-      aiSummary:
-        'Automated distributed password spraying attempt. Rate-limiting and geo-blocking successfully activated.',
-      aiRiskScore: 0.35,
-      mitigationSteps: [
-        'Maintain perimeter IP blocklist for 48 hours',
-        'Enforce FIDO2 WebAuthn prompts on targeted accounts',
-      ],
-      aiAnalysis: {
-        summary:
-          'Automated distributed password spraying attempt. Rate-limiting and geo-blocking successfully activated.',
-        riskAssessment: 'Low residual risk. No successful authentications identified.',
-        recommendedMitigations: [
-          'Maintain perimeter IP blocklist for 48 hours',
-          'Enforce FIDO2 WebAuthn prompts on targeted accounts',
-        ],
-        confidenceScore: 0.96,
-        analyzedAt: new Date(Date.now() - 14000000).toISOString(),
-        modelUsed: 'SentinelFlow-SecurityLLM-v2',
-      },
-      createdAt: new Date(Date.now() - 14400000),
-      updatedAt: new Date(Date.now() - 12000000),
-      iocs: {
-        create: [
-          {
-            id: 'IOC-004',
-            type: IOCType.IP,
-            value: '192.0.2.14',
-            threatScore: 65,
-            enrichedData: { abuseReports: 24 },
-            createdAt: new Date(Date.now() - 14400000),
-          },
-        ],
-      },
-    },
-  });
-
-  // 3. Upsert Sample Alerts
+  // 6. Upsert Alerts
   await prisma.securityAlert.upsert({
     where: { id: 'ALT-9821' },
-    update: {},
+    update: { organizationId: primaryOrg.id },
     create: {
       id: 'ALT-9821',
       title: 'PowerShell EncodedCommand Execution',
@@ -195,61 +214,30 @@ async function main() {
       severity: Severity.CRITICAL,
       source: 'CrowdStrike Falcon EDR',
       incidentId: inc1.id,
-      tenantId: 'default-tenant',
+      tenantId: primaryOrg.id,
+      organizationId: primaryOrg.id,
       detectedAt: new Date(Date.now() - 3600000),
       createdAt: new Date(Date.now() - 3600000),
     },
   });
 
   await prisma.securityAlert.upsert({
-    where: { id: 'ALT-9823' },
-    update: {},
+    where: { id: 'ALT-FOREIGN-01' },
+    update: { organizationId: secondaryOrg.id },
     create: {
-      id: 'ALT-9823',
-      title: 'LSASS Memory Read Access',
-      description: 'Unsigned binary attempted OpenProcess on lsass.exe process ID 684.',
-      severity: Severity.CRITICAL,
-      source: 'Microsoft Defender for Endpoint',
-      incidentId: inc1.id,
-      tenantId: 'default-tenant',
-      detectedAt: new Date(Date.now() - 3550000),
-      createdAt: new Date(Date.now() - 3550000),
-    },
-  });
-
-  await prisma.securityAlert.upsert({
-    where: { id: 'ALT-9844' },
-    update: {},
-    create: {
-      id: 'ALT-9844',
-      title: 'AWS CloudTrail Root / Admin Console Access',
-      description: 'ConsoleLogin event without MFA verification detected from unrecognized ASN.',
-      severity: Severity.HIGH,
-      source: 'AWS GuardDuty',
-      incidentId: inc2.id,
-      tenantId: 'default-tenant',
-      detectedAt: new Date(Date.now() - 5400000),
-      createdAt: new Date(Date.now() - 5400000),
-    },
-  });
-
-  await prisma.securityAlert.upsert({
-    where: { id: 'ALT-9810' },
-    update: {},
-    create: {
-      id: 'ALT-9810',
-      title: 'Brute Force / Password Spray Attack',
-      description: 'High volume of 401 Unauthorized responses from Okta identity provider.',
+      id: 'ALT-FOREIGN-01',
+      title: 'Foreign Org Restricted Alert',
+      description: 'Alert restricted to SecOps Global tenant.',
       severity: Severity.MEDIUM,
-      source: 'Okta System Log',
-      incidentId: inc3.id,
-      tenantId: 'default-tenant',
-      detectedAt: new Date(Date.now() - 14400000),
-      createdAt: new Date(Date.now() - 14400000),
+      source: 'SecOps Internal SIEM',
+      tenantId: secondaryOrg.id,
+      organizationId: secondaryOrg.id,
+      detectedAt: new Date(Date.now() - 500000),
+      createdAt: new Date(Date.now() - 500000),
     },
   });
 
-  console.log('✅ SentinelFlow seed completed successfully.');
+  console.log('✅ SentinelFlow Phase 2 seed with Auth & RBAC completed successfully.');
 }
 
 main()

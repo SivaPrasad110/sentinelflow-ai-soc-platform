@@ -1,7 +1,6 @@
 import {
   Injectable,
   NotFoundException,
-  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
@@ -14,7 +13,12 @@ import {
   IndicatorOfCompromise as SharedIOC,
   AIAnalysisResult,
 } from '@sentinelflow/shared';
-import { Incident as PrismaIncident, IndicatorOfCompromise as PrismaIOC, User as PrismaUser, SecurityAlert as PrismaAlert } from '@prisma/client';
+import {
+  Incident as PrismaIncident,
+  IndicatorOfCompromise as PrismaIOC,
+  User as PrismaUser,
+  SecurityAlert as PrismaAlert,
+} from '@prisma/client';
 
 type IncidentWithRelations = PrismaIncident & {
   iocs: PrismaIOC[];
@@ -25,21 +29,8 @@ type IncidentWithRelations = PrismaIncident & {
 @Injectable()
 export class IncidentsService {
   private readonly logger = new Logger(IncidentsService.name);
-  private readonly defaultTenant = 'default-tenant';
 
   constructor(private readonly prisma: PrismaService) {}
-
-  /**
-   * Verify tenant access authorization before querying or mutating multi-tenant data.
-   */
-  private verifyTenantAccess(requestedTenantId?: string, userTenantId: string = this.defaultTenant): string {
-    const targetTenant = requestedTenantId || userTenantId;
-    if (targetTenant !== userTenantId && userTenantId !== 'system-admin-tenant') {
-      this.logger.warn(`Tenant authorization failure: attempted access to "${targetTenant}" from "${userTenantId}"`);
-      throw new ForbiddenException(`Unauthorized: cross-tenant access to "${targetTenant}" is denied.`);
-    }
-    return targetTenant;
-  }
 
   private mapToSharedIncident(incident: IncidentWithRelations): SharedIncident {
     const iocs: SharedIOC[] = (incident.iocs || []).map((ioc) => ({
@@ -57,6 +48,7 @@ export class IncidentsService {
       description: incident.description,
       severity: incident.severity as AlertSeverity,
       status: incident.status as SharedIncidentStatus,
+      organizationId: incident.organizationId || incident.tenantId,
       sourceAlertIds: (incident.alerts || []).map((a) => a.id),
       iocs,
       aiAnalysis: (incident.aiAnalysis as unknown as AIAnalysisResult) || undefined,
@@ -66,10 +58,14 @@ export class IncidentsService {
     };
   }
 
-  async findAll(tenantId?: string): Promise<SharedIncident[]> {
-    const authorizedTenant = this.verifyTenantAccess(tenantId);
+  async findAll(organizationId: string): Promise<SharedIncident[]> {
     const incidents = await this.prisma.incident.findMany({
-      where: { tenantId: authorizedTenant },
+      where: {
+        OR: [
+          { organizationId },
+          { tenantId: organizationId },
+        ],
+      },
       include: {
         iocs: true,
         alerts: true,
@@ -81,10 +77,15 @@ export class IncidentsService {
     return incidents.map((inc) => this.mapToSharedIncident(inc));
   }
 
-  async findById(id: string, tenantId?: string): Promise<SharedIncident> {
-    const authorizedTenant = this.verifyTenantAccess(tenantId);
+  async findById(id: string, organizationId: string): Promise<SharedIncident> {
     const incident = await this.prisma.incident.findFirst({
-      where: { id, tenantId: authorizedTenant },
+      where: {
+        id,
+        OR: [
+          { organizationId },
+          { tenantId: organizationId },
+        ],
+      },
       include: {
         iocs: true,
         alerts: true,
@@ -93,23 +94,26 @@ export class IncidentsService {
     });
 
     if (!incident) {
-      throw new NotFoundException(`Incident with ID "${id}" was not found.`);
+      throw new NotFoundException(`Incident with ID "${id}" was not found in your organization.`);
     }
 
     return this.mapToSharedIncident(incident);
   }
 
-  async create(dto: CreateIncidentDto, tenantId?: string): Promise<SharedIncident> {
-    const authorizedTenant = this.verifyTenantAccess(dto.tenantId || tenantId);
-
+  async create(
+    dto: CreateIncidentDto,
+    organizationId: string,
+    creatorUserId?: string,
+  ): Promise<SharedIncident> {
     const created = await this.prisma.incident.create({
       data: {
         title: dto.title,
         description: dto.description,
         severity: dto.severity || 'MEDIUM',
         status: dto.status || 'NEW',
-        tenantId: authorizedTenant,
-        assignedToId: dto.assignedToId,
+        organizationId,
+        tenantId: organizationId,
+        assignedToId: dto.assignedToId || creatorUserId,
         mitigationSteps: dto.mitigationSteps || [],
         aiAnalysis: (dto.aiAnalysis as any) || undefined,
         iocs: dto.iocs && dto.iocs.length > 0
@@ -137,11 +141,13 @@ export class IncidentsService {
     return this.mapToSharedIncident(created);
   }
 
-  async update(id: string, dto: UpdateIncidentDto, tenantId?: string): Promise<SharedIncident> {
-    const authorizedTenant = this.verifyTenantAccess(tenantId);
-
-    // Verify existence
-    await this.findById(id, authorizedTenant);
+  async update(
+    id: string,
+    dto: UpdateIncidentDto,
+    organizationId: string,
+  ): Promise<SharedIncident> {
+    // Verify existence within authorized organization first to prevent IDOR
+    await this.findById(id, organizationId);
 
     const updated = await this.prisma.incident.update({
       where: { id },
@@ -173,9 +179,9 @@ export class IncidentsService {
     return this.mapToSharedIncident(updated);
   }
 
-  async delete(id: string, tenantId?: string): Promise<{ success: boolean; id: string }> {
-    const authorizedTenant = this.verifyTenantAccess(tenantId);
-    await this.findById(id, authorizedTenant);
+  async delete(id: string, organizationId: string): Promise<{ success: boolean; id: string }> {
+    // Verify existence in authorized organization
+    await this.findById(id, organizationId);
 
     await this.prisma.incident.delete({
       where: { id },

@@ -15,6 +15,38 @@ export type IncidentStatus =
 
 export type IOCType = 'IP' | 'DOMAIN' | 'HASH_SHA256' | 'HASH_MD5' | 'URL' | 'EMAIL';
 
+export type OrgRole = 'ADMIN' | 'ANALYST' | 'VIEWER';
+
+export interface Organization {
+  id: string;
+  name: string;
+  slug: string;
+  createdAt: string;
+}
+
+export interface OrganizationMembership {
+  id: string;
+  organizationId: string;
+  organizationName: string;
+  organizationSlug: string;
+  role: OrgRole;
+}
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  name: string;
+  activeOrganizationId: string;
+  activeRole: OrgRole;
+  memberships: OrganizationMembership[];
+  createdAt: string;
+}
+
+export interface AuthResponse {
+  accessToken: string;
+  user: UserProfile;
+}
+
 export interface IndicatorOfCompromise {
   id: string;
   type: IOCType;
@@ -31,6 +63,7 @@ export interface SecurityAlert {
   severity: AlertSeverity;
   source: string; // e.g. 'SIEM', 'EDR', 'CloudTrail', 'WAF'
   rawEvent?: Record<string, unknown>;
+  organizationId?: string;
   detectedAt: string;
   createdAt: string;
 }
@@ -50,6 +83,7 @@ export interface Incident {
   description: string;
   severity: AlertSeverity;
   status: IncidentStatus;
+  organizationId?: string;
   sourceAlertIds: string[];
   iocs: IndicatorOfCompromise[];
   aiAnalysis?: AIAnalysisResult;
