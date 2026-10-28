@@ -14,7 +14,7 @@ export class HealthController {
     status: 200,
     description: 'Returns health status of SentinelFlow platform',
   })
-  getHealth(): SystemHealthResponse {
+  async getHealth(): Promise<SystemHealthResponse> {
     return this.healthService.checkHealth();
   }
 }

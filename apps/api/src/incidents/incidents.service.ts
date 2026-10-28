@@ -1,141 +1,186 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { Incident, IncidentStatus, AlertSeverity } from '@sentinelflow/shared';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+  Logger,
+} from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { CreateIncidentDto } from './dto/create-incident.dto';
+import { UpdateIncidentDto } from './dto/update-incident.dto';
+import {
+  Incident as SharedIncident,
+  AlertSeverity,
+  IncidentStatus as SharedIncidentStatus,
+  IndicatorOfCompromise as SharedIOC,
+  AIAnalysisResult,
+} from '@sentinelflow/shared';
+import { Incident as PrismaIncident, IndicatorOfCompromise as PrismaIOC, User as PrismaUser, SecurityAlert as PrismaAlert } from '@prisma/client';
+
+type IncidentWithRelations = PrismaIncident & {
+  iocs: PrismaIOC[];
+  alerts?: PrismaAlert[];
+  assignedTo?: PrismaUser | null;
+};
 
 @Injectable()
 export class IncidentsService {
-  // Seeded mock incidents for development initialization
-  private incidents: Incident[] = [
-    {
-      id: 'INC-2026-001',
-      title: 'Suspicious PowerShell Execution & EDR Evasion',
-      description: 'Endpoint telemetry flagged obfuscated PowerShell command executing base64 payload matching Mimikatz signatures on workstation WS-FIN-04.',
-      severity: 'CRITICAL',
-      status: 'INVESTIGATING',
-      sourceAlertIds: ['ALT-9821', 'ALT-9823'],
-      iocs: [
-        {
-          id: 'IOC-001',
-          type: 'IP',
-          value: '198.51.100.42',
-          threatScore: 89,
-          createdAt: new Date(Date.now() - 3600000).toISOString(),
-        },
-        {
-          id: 'IOC-002',
-          type: 'HASH_SHA256',
-          value: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-          threatScore: 95,
-          createdAt: new Date(Date.now() - 3500000).toISOString(),
-        },
-      ],
-      aiAnalysis: {
-        summary: 'High-confidence credential dumping attempt following initial access via spear-phishing attachment.',
-        riskAssessment: 'Critical risk of lateral movement across internal corporate subnet within next 30 minutes.',
-        recommendedMitigations: [
-          'Isolate host WS-FIN-04 via EDR agent',
-          'Revoke active Kerberos ticket-granting tickets for user j.doe',
-          'Block egress communication to 198.51.100.42 at perimeter firewall',
-        ],
-        confidenceScore: 0.94,
-        analyzedAt: new Date(Date.now() - 1800000).toISOString(),
-        modelUsed: 'SentinelFlow-SecurityLLM-v2',
-      },
-      assignedTo: 'Lead SOC Analyst Sarah Chen',
-      createdAt: new Date(Date.now() - 7200000).toISOString(),
-      updatedAt: new Date(Date.now() - 1800000).toISOString(),
-    },
-    {
-      id: 'INC-2026-002',
-      title: 'Anomalous Cloud API Invocations from Foreign ASN',
-      description: 'IAM user prod-deployer invoked DescribeInstances and GetSecretValue from unrecognized IP range in AS13335 outside normal deployment window.',
-      severity: 'HIGH',
-      status: 'TRIAGED',
-      sourceAlertIds: ['ALT-9844'],
-      iocs: [
-        {
-          id: 'IOC-003',
-          type: 'IP',
-          value: '203.0.113.88',
-          threatScore: 78,
-          createdAt: new Date(Date.now() - 5400000).toISOString(),
-        },
-      ],
-      aiAnalysis: {
-        summary: 'Potential long-lived AWS IAM access key compromise. Secret exfiltration attempt detected.',
-        riskAssessment: 'High risk of unauthorized production infrastructure access.',
-        recommendedMitigations: [
-          'Deactivate compromised IAM access key prod-deployer-ak-02',
-          'Audit AWS CloudTrail events for preceding 24 hours',
-          'Rotate all production secrets accessed during the anomalous session',
-        ],
-        confidenceScore: 0.88,
-        analyzedAt: new Date(Date.now() - 3600000).toISOString(),
-        modelUsed: 'SentinelFlow-SecurityLLM-v2',
-      },
-      assignedTo: 'Cloud Security Analyst Alex Rivera',
-      createdAt: new Date(Date.now() - 5400000).toISOString(),
-      updatedAt: new Date(Date.now() - 3600000).toISOString(),
-    },
-    {
-      id: 'INC-2026-003',
-      title: 'Repeated Password Spraying on SSO Gateway',
-      description: 'Over 4,500 authentication failures recorded against Okta SSO endpoint across 120 unique user accounts over 10 minutes.',
-      severity: 'MEDIUM',
-      status: 'CONTAINED',
-      sourceAlertIds: ['ALT-9810'],
-      iocs: [
-        {
-          id: 'IOC-004',
-          type: 'IP',
-          value: '192.0.2.14',
-          threatScore: 65,
-          createdAt: new Date(Date.now() - 14400000).toISOString(),
-        },
-      ],
-      aiAnalysis: {
-        summary: 'Automated distributed password spraying attempt. Rate-limiting and geo-blocking successfully activated.',
-        riskAssessment: 'Low residual risk. No successful authentications identified.',
-        recommendedMitigations: [
-          'Maintain perimeter IP blocklist for 48 hours',
-          'Enforce FIDO2 WebAuthn prompts on targeted accounts',
-        ],
-        confidenceScore: 0.96,
-        analyzedAt: new Date(Date.now() - 14000000).toISOString(),
-        modelUsed: 'SentinelFlow-SecurityLLM-v2',
-      },
-      assignedTo: 'Automated SOC Playbook (n8n)',
-      createdAt: new Date(Date.now() - 14400000).toISOString(),
-      updatedAt: new Date(Date.now() - 12000000).toISOString(),
-    },
-  ];
+  private readonly logger = new Logger(IncidentsService.name);
+  private readonly defaultTenant = 'default-tenant';
 
-  findAll(): Incident[] {
-    return this.incidents;
+  constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Verify tenant access authorization before querying or mutating multi-tenant data.
+   */
+  private verifyTenantAccess(requestedTenantId?: string, userTenantId: string = this.defaultTenant): string {
+    const targetTenant = requestedTenantId || userTenantId;
+    if (targetTenant !== userTenantId && userTenantId !== 'system-admin-tenant') {
+      this.logger.warn(`Tenant authorization failure: attempted access to "${targetTenant}" from "${userTenantId}"`);
+      throw new ForbiddenException(`Unauthorized: cross-tenant access to "${targetTenant}" is denied.`);
+    }
+    return targetTenant;
   }
 
-  findById(id: string): Incident {
-    const incident = this.incidents.find((inc) => inc.id === id);
+  private mapToSharedIncident(incident: IncidentWithRelations): SharedIncident {
+    const iocs: SharedIOC[] = (incident.iocs || []).map((ioc) => ({
+      id: ioc.id,
+      type: ioc.type as SharedIOC['type'],
+      value: ioc.value,
+      threatScore: ioc.threatScore !== null ? ioc.threatScore : undefined,
+      enrichedData: (ioc.enrichedData as Record<string, unknown>) || undefined,
+      createdAt: ioc.createdAt.toISOString(),
+    }));
+
+    return {
+      id: incident.id,
+      title: incident.title,
+      description: incident.description,
+      severity: incident.severity as AlertSeverity,
+      status: incident.status as SharedIncidentStatus,
+      sourceAlertIds: (incident.alerts || []).map((a) => a.id),
+      iocs,
+      aiAnalysis: (incident.aiAnalysis as unknown as AIAnalysisResult) || undefined,
+      assignedTo: incident.assignedTo ? incident.assignedTo.name : undefined,
+      createdAt: incident.createdAt.toISOString(),
+      updatedAt: incident.updatedAt.toISOString(),
+    };
+  }
+
+  async findAll(tenantId?: string): Promise<SharedIncident[]> {
+    const authorizedTenant = this.verifyTenantAccess(tenantId);
+    const incidents = await this.prisma.incident.findMany({
+      where: { tenantId: authorizedTenant },
+      include: {
+        iocs: true,
+        alerts: true,
+        assignedTo: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return incidents.map((inc) => this.mapToSharedIncident(inc));
+  }
+
+  async findById(id: string, tenantId?: string): Promise<SharedIncident> {
+    const authorizedTenant = this.verifyTenantAccess(tenantId);
+    const incident = await this.prisma.incident.findFirst({
+      where: { id, tenantId: authorizedTenant },
+      include: {
+        iocs: true,
+        alerts: true,
+        assignedTo: true,
+      },
+    });
+
     if (!incident) {
       throw new NotFoundException(`Incident with ID "${id}" was not found.`);
     }
-    return incident;
+
+    return this.mapToSharedIncident(incident);
   }
 
-  create(data: Partial<Incident>): Incident {
-    const newIncident: Incident = {
-      id: `INC-2026-${String(this.incidents.length + 1).padStart(3, '0')}`,
-      title: data.title || 'Untitled Security Incident',
-      description: data.description || 'No description provided',
-      severity: data.severity || 'MEDIUM',
-      status: data.status || 'NEW',
-      sourceAlertIds: data.sourceAlertIds || [],
-      iocs: data.iocs || [],
-      aiAnalysis: data.aiAnalysis,
-      assignedTo: data.assignedTo,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    this.incidents.unshift(newIncident);
-    return newIncident;
+  async create(dto: CreateIncidentDto, tenantId?: string): Promise<SharedIncident> {
+    const authorizedTenant = this.verifyTenantAccess(dto.tenantId || tenantId);
+
+    const created = await this.prisma.incident.create({
+      data: {
+        title: dto.title,
+        description: dto.description,
+        severity: dto.severity || 'MEDIUM',
+        status: dto.status || 'NEW',
+        tenantId: authorizedTenant,
+        assignedToId: dto.assignedToId,
+        mitigationSteps: dto.mitigationSteps || [],
+        aiAnalysis: (dto.aiAnalysis as any) || undefined,
+        iocs: dto.iocs && dto.iocs.length > 0
+          ? {
+              create: dto.iocs.map((ioc) => ({
+                type: ioc.type,
+                value: ioc.value,
+                threatScore: ioc.threatScore,
+              })),
+            }
+          : undefined,
+        alerts: dto.sourceAlertIds && dto.sourceAlertIds.length > 0
+          ? {
+              connect: dto.sourceAlertIds.map((alertId) => ({ id: alertId })),
+            }
+          : undefined,
+      },
+      include: {
+        iocs: true,
+        alerts: true,
+        assignedTo: true,
+      },
+    });
+
+    return this.mapToSharedIncident(created);
+  }
+
+  async update(id: string, dto: UpdateIncidentDto, tenantId?: string): Promise<SharedIncident> {
+    const authorizedTenant = this.verifyTenantAccess(tenantId);
+
+    // Verify existence
+    await this.findById(id, authorizedTenant);
+
+    const updated = await this.prisma.incident.update({
+      where: { id },
+      data: {
+        ...(dto.title && { title: dto.title }),
+        ...(dto.description && { description: dto.description }),
+        ...(dto.severity && { severity: dto.severity }),
+        ...(dto.status && { status: dto.status }),
+        ...(dto.assignedToId && { assignedToId: dto.assignedToId }),
+        ...(dto.mitigationSteps && { mitigationSteps: dto.mitigationSteps }),
+        ...(dto.aiAnalysis && { aiAnalysis: dto.aiAnalysis as any }),
+        ...(dto.iocs && dto.iocs.length > 0 && {
+          iocs: {
+            create: dto.iocs.map((ioc) => ({
+              type: ioc.type,
+              value: ioc.value,
+              threatScore: ioc.threatScore,
+            })),
+          },
+        }),
+      },
+      include: {
+        iocs: true,
+        alerts: true,
+        assignedTo: true,
+      },
+    });
+
+    return this.mapToSharedIncident(updated);
+  }
+
+  async delete(id: string, tenantId?: string): Promise<{ success: boolean; id: string }> {
+    const authorizedTenant = this.verifyTenantAccess(tenantId);
+    await this.findById(id, authorizedTenant);
+
+    await this.prisma.incident.delete({
+      where: { id },
+    });
+
+    return { success: true, id };
   }
 }

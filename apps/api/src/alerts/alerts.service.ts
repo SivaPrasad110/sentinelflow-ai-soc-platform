@@ -1,63 +1,99 @@
-import { Injectable } from '@nestjs/common';
-import { SecurityAlert } from '@sentinelflow/shared';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+  Logger,
+} from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { IngestAlertDto } from './dto/ingest-alert.dto';
+import { UpdateAlertDto } from './dto/update-alert.dto';
+import { SecurityAlert as SharedAlert, AlertSeverity } from '@sentinelflow/shared';
+import { SecurityAlert as PrismaAlert } from '@prisma/client';
 
 @Injectable()
 export class AlertsService {
-  private alerts: SecurityAlert[] = [
-    {
-      id: 'ALT-9821',
-      title: 'PowerShell EncodedCommand Execution',
-      description: 'Host WS-FIN-04 executed powershell.exe -enc with elevated permissions.',
-      severity: 'CRITICAL',
-      source: 'CrowdStrike Falcon EDR',
-      detectedAt: new Date(Date.now() - 3600000).toISOString(),
-      createdAt: new Date(Date.now() - 3600000).toISOString(),
-    },
-    {
-      id: 'ALT-9823',
-      title: 'LSASS Memory Read Access',
-      description: 'Unsigned binary attempted OpenProcess on lsass.exe process ID 684.',
-      severity: 'CRITICAL',
-      source: 'Microsoft Defender for Endpoint',
-      detectedAt: new Date(Date.now() - 3550000).toISOString(),
-      createdAt: new Date(Date.now() - 3550000).toISOString(),
-    },
-    {
-      id: 'ALT-9844',
-      title: 'AWS CloudTrail Root / Admin Console Access',
-      description: 'ConsoleLogin event without MFA verification detected from unrecognized ASN.',
-      severity: 'HIGH',
-      source: 'AWS GuardDuty',
-      detectedAt: new Date(Date.now() - 5400000).toISOString(),
-      createdAt: new Date(Date.now() - 5400000).toISOString(),
-    },
-    {
-      id: 'ALT-9810',
-      title: 'Brute Force / Password Spray Attack',
-      description: 'High volume of 401 Unauthorized responses from Okta identity provider.',
-      severity: 'MEDIUM',
-      source: 'Okta System Log',
-      detectedAt: new Date(Date.now() - 14400000).toISOString(),
-      createdAt: new Date(Date.now() - 14400000).toISOString(),
-    },
-  ];
+  private readonly logger = new Logger(AlertsService.name);
+  private readonly defaultTenant = 'default-tenant';
 
-  findAll(): SecurityAlert[] {
-    return this.alerts;
+  constructor(private readonly prisma: PrismaService) {}
+
+  private verifyTenantAccess(requestedTenantId?: string, userTenantId: string = this.defaultTenant): string {
+    const targetTenant = requestedTenantId || userTenantId;
+    if (targetTenant !== userTenantId && userTenantId !== 'system-admin-tenant') {
+      this.logger.warn(`Tenant authorization failure: attempted access to "${targetTenant}" from "${userTenantId}"`);
+      throw new ForbiddenException(`Unauthorized: cross-tenant access to "${targetTenant}" is denied.`);
+    }
+    return targetTenant;
   }
 
-  ingest(alert: Partial<SecurityAlert>): SecurityAlert {
-    const newAlert: SecurityAlert = {
-      id: `ALT-${Math.floor(1000 + Math.random() * 9000)}`,
-      title: alert.title || 'Security Event',
-      description: alert.description || '',
-      severity: alert.severity || 'MEDIUM',
-      source: alert.source || 'Generic SIEM',
-      rawEvent: alert.rawEvent,
-      detectedAt: alert.detectedAt || new Date().toISOString(),
-      createdAt: new Date().toISOString(),
+  private mapToSharedAlert(alert: PrismaAlert): SharedAlert {
+    return {
+      id: alert.id,
+      title: alert.title,
+      description: alert.description,
+      severity: alert.severity as AlertSeverity,
+      source: alert.source,
+      rawEvent: (alert.rawPayload as Record<string, unknown>) || undefined,
+      detectedAt: alert.detectedAt.toISOString(),
+      createdAt: alert.createdAt.toISOString(),
     };
-    this.alerts.unshift(newAlert);
-    return newAlert;
+  }
+
+  async findAll(tenantId?: string): Promise<SharedAlert[]> {
+    const authorizedTenant = this.verifyTenantAccess(tenantId);
+    const alerts = await this.prisma.securityAlert.findMany({
+      where: { tenantId: authorizedTenant },
+      orderBy: { detectedAt: 'desc' },
+    });
+    return alerts.map((a) => this.mapToSharedAlert(a));
+  }
+
+  async findById(id: string, tenantId?: string): Promise<SharedAlert> {
+    const authorizedTenant = this.verifyTenantAccess(tenantId);
+    const alert = await this.prisma.securityAlert.findFirst({
+      where: { id, tenantId: authorizedTenant },
+    });
+
+    if (!alert) {
+      throw new NotFoundException(`Security Alert with ID "${id}" was not found.`);
+    }
+
+    return this.mapToSharedAlert(alert);
+  }
+
+  async ingest(dto: IngestAlertDto, tenantId?: string): Promise<SharedAlert> {
+    const authorizedTenant = this.verifyTenantAccess(dto.tenantId || tenantId);
+
+    const alert = await this.prisma.securityAlert.create({
+      data: {
+        title: dto.title,
+        description: dto.description,
+        severity: dto.severity || 'MEDIUM',
+        source: dto.source,
+        tenantId: authorizedTenant,
+        incidentId: dto.incidentId,
+        rawPayload: (dto.rawPayload as any) || undefined,
+        detectedAt: dto.detectedAt ? new Date(dto.detectedAt) : new Date(),
+      },
+    });
+
+    return this.mapToSharedAlert(alert);
+  }
+
+  async update(id: string, dto: UpdateAlertDto, tenantId?: string): Promise<SharedAlert> {
+    const authorizedTenant = this.verifyTenantAccess(tenantId);
+    await this.findById(id, authorizedTenant);
+
+    const updated = await this.prisma.securityAlert.update({
+      where: { id },
+      data: {
+        ...(dto.title && { title: dto.title }),
+        ...(dto.description && { description: dto.description }),
+        ...(dto.severity && { severity: dto.severity }),
+        ...(dto.incidentId !== undefined && { incidentId: dto.incidentId }),
+      },
+    });
+
+    return this.mapToSharedAlert(updated);
   }
 }

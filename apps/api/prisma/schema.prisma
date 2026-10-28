@@ -46,9 +46,12 @@ model User {
   email     String     @unique
   name      String
   role      UserRole   @default(ANALYST)
+  tenantId  String     @default("default-tenant")
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
   incidents Incident[]
+
+  @@index([tenantId])
 }
 
 model SecurityAlert {
@@ -58,10 +61,16 @@ model SecurityAlert {
   severity    Severity  @default(MEDIUM)
   source      String
   rawPayload  Json?
+  tenantId    String    @default("default-tenant")
   detectedAt  DateTime  @default(now())
   createdAt   DateTime  @default(now())
   incidentId  String?
-  incident    Incident? @relation(fields: [incidentId], references: [id])
+  incident    Incident? @relation(fields: [incidentId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([severity])
+  @@index([incidentId])
+  @@index([detectedAt])
 }
 
 model Incident {
@@ -70,16 +79,23 @@ model Incident {
   description        String
   severity           Severity                @default(MEDIUM)
   status             IncidentStatus          @default(NEW)
+  tenantId           String                  @default("default-tenant")
   assignedToId       String?
-  assignedTo         User?                   @relation(fields: [assignedToId], references: [id])
+  assignedTo         User?                   @relation(fields: [assignedToId], references: [id], onDelete: SetNull)
   alerts             SecurityAlert[]
   iocs               IndicatorOfCompromise[]
   aiSummary          String?
   aiRiskScore        Float?
   mitigationSteps    String[]
+  aiAnalysis         Json?
   createdAt          DateTime                @default(now())
   updatedAt          DateTime                @updatedAt
   workflowExecutions WorkflowExecutionLog[]
+
+  @@index([tenantId])
+  @@index([status])
+  @@index([severity])
+  @@index([createdAt])
 }
 
 model IndicatorOfCompromise {
@@ -91,6 +107,10 @@ model IndicatorOfCompromise {
   incidentId   String
   incident     Incident  @relation(fields: [incidentId], references: [id], onDelete: Cascade)
   createdAt    DateTime  @default(now())
+
+  @@index([incidentId])
+  @@index([value])
+  @@index([type])
 }
 
 model WorkflowExecutionLog {
@@ -103,4 +123,7 @@ model WorkflowExecutionLog {
   incident      Incident  @relation(fields: [incidentId], references: [id], onDelete: Cascade)
   triggeredAt   DateTime  @default(now())
   completedAt   DateTime?
+
+  @@index([incidentId])
+  @@index([workflowId])
 }
