@@ -9,6 +9,7 @@ import {
   HttpCode,
   HttpStatus,
   Headers,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { Request, Response } from 'express';
@@ -100,7 +101,7 @@ export class AuthController {
   ): Promise<{ accessToken: string }> {
     const token = body.refreshToken || req.cookies?.['refresh_token'];
     if (!token) {
-      throw new Error('Refresh token not provided.');
+      throw new UnauthorizedException('Refresh token not provided.');
     }
 
     const result = await this.authService.refresh({ refreshToken: token }, this.extractClientMetadata(req));
