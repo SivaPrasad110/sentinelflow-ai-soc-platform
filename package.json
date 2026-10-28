@@ -1,0 +1,22 @@
+{
+  "name": "sentinelflow-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SentinelFlow - Production-oriented AI Security Operations Platform",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build:shared": "npm --workspace=@sentinelflow/shared run build",
+    "build": "npm run build:shared && npm run build --workspaces --if-present",
+    "dev:api": "npm --workspace=@sentinelflow/api run start:dev",
+    "dev:web": "npm --workspace=@sentinelflow/web run dev",
+    "build:api": "npm --workspace=@sentinelflow/api run build",
+    "build:web": "npm --workspace=@sentinelflow/web run build",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}

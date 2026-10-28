@@ -1,0 +1,106 @@
+// SentinelFlow Prisma Schema
+// PostgreSQL with Prisma ORM
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Severity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum IncidentStatus {
+  NEW
+  TRIAGED
+  INVESTIGATING
+  CONTAINED
+  RESOLVED
+  CLOSED
+}
+
+enum IOCType {
+  IP
+  DOMAIN
+  HASH_SHA256
+  HASH_MD5
+  URL
+  EMAIL
+}
+
+enum UserRole {
+  ANALYST
+  SOC_LEAD
+  ADMIN
+}
+
+model User {
+  id        String     @id @default(uuid())
+  email     String     @unique
+  name      String
+  role      UserRole   @default(ANALYST)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  incidents Incident[]
+}
+
+model SecurityAlert {
+  id          String    @id @default(uuid())
+  title       String
+  description String
+  severity    Severity  @default(MEDIUM)
+  source      String
+  rawPayload  Json?
+  detectedAt  DateTime  @default(now())
+  createdAt   DateTime  @default(now())
+  incidentId  String?
+  incident    Incident? @relation(fields: [incidentId], references: [id])
+}
+
+model Incident {
+  id                 String                  @id @default(uuid())
+  title              String
+  description        String
+  severity           Severity                @default(MEDIUM)
+  status             IncidentStatus          @default(NEW)
+  assignedToId       String?
+  assignedTo         User?                   @relation(fields: [assignedToId], references: [id])
+  alerts             SecurityAlert[]
+  iocs               IndicatorOfCompromise[]
+  aiSummary          String?
+  aiRiskScore        Float?
+  mitigationSteps    String[]
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+  workflowExecutions WorkflowExecutionLog[]
+}
+
+model IndicatorOfCompromise {
+  id           String    @id @default(uuid())
+  type         IOCType
+  value        String
+  threatScore  Float?
+  enrichedData Json?
+  incidentId   String
+  incident     Incident  @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  createdAt    DateTime  @default(now())
+}
+
+model WorkflowExecutionLog {
+  id            String    @id @default(uuid())
+  workflowId    String
+  executionId   String
+  status        String
+  outputSummary String?
+  incidentId    String
+  incident      Incident  @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  triggeredAt   DateTime  @default(now())
+  completedAt   DateTime?
+}
