@@ -57,6 +57,8 @@ model Organization {
   incidents        Incident[]
   alerts           SecurityAlert[]
   incidentAnalyses IncidentAnalysis[]
+  timelineEvents   IncidentTimelineEvent[]
+  auditLogs        AuditLog[]
 }
 
 model OrganizationMembership {
@@ -147,10 +149,14 @@ model Incident {
   aiRiskScore        Float?
   mitigationSteps    String[]
   aiAnalysis         Json?
+  acknowledgedAt     DateTime?
+  resolvedAt         DateTime?
+  closedAt           DateTime?
   createdAt          DateTime                @default(now())
   updatedAt          DateTime                @updatedAt
   workflowExecutions WorkflowExecutionLog[]
   analyses           IncidentAnalysis[]
+  timelineEvents     IncidentTimelineEvent[]
 
   @@index([tenantId])
   @@index([organizationId])
@@ -235,4 +241,43 @@ model IncidentAnalysis {
   @@index([status])
   @@index([createdAt])
   @@index([eventId])
+}
+
+model IncidentTimelineEvent {
+  id             String       @id @default(uuid())
+  incidentId     String
+  incident       Incident     @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  type           String       @default("COMMENT")
+  message        String
+  userId         String?
+  userName       String?
+  userEmail      String?
+  metadata       Json?
+  createdAt      DateTime     @default(now())
+
+  @@index([incidentId])
+  @@index([organizationId])
+  @@index([createdAt])
+}
+
+model AuditLog {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String?
+  userEmail      String?
+  action         String
+  entityType     String
+  entityId       String?
+  details        Json?
+  ipAddress      String?
+  userAgent      String?
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId])
+  @@index([action])
+  @@index([createdAt])
+  @@index([entityType, entityId])
 }

@@ -150,3 +150,121 @@ export async function getIncidentAnalyses(incidentId: string) {
 
   return response.json();
 }
+
+/**
+ * Fetch SOC metrics, MTTA, MTTR, and trends
+ */
+export async function getSocMetrics() {
+  const response = await secureFetch('/api/v1/analytics/soc-metrics', {
+    method: 'GET',
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to fetch SOC metrics (HTTP ${response.status})`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Assign incident to analyst
+ */
+export async function assignIncident(incidentId: string, assignedToId: string | null) {
+  const response = await secureFetch(`/api/v1/incidents/${incidentId}/assign`, {
+    method: 'PATCH',
+    body: JSON.stringify({ assignedToId }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to assign incident (HTTP ${response.status})`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Update incident status
+ */
+export async function updateIncidentStatus(incidentId: string, status: string) {
+  const response = await secureFetch(`/api/v1/incidents/${incidentId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to update status (HTTP ${response.status})`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Fetch incident investigation timeline
+ */
+export async function getIncidentTimeline(incidentId: string) {
+  const response = await secureFetch(`/api/v1/incidents/${incidentId}/timeline`, {
+    method: 'GET',
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to load timeline (HTTP ${response.status})`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Add comment to incident investigation timeline
+ */
+export async function addIncidentComment(incidentId: string, comment: string) {
+  const response = await secureFetch(`/api/v1/incidents/${incidentId}/comments`, {
+    method: 'POST',
+    body: JSON.stringify({ comment }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to add comment (HTTP ${response.status})`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Fetch verified members of active organization
+ */
+export async function getOrgMembers() {
+  const response = await secureFetch('/api/v1/incidents/members', {
+    method: 'GET',
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to fetch organization members (HTTP ${response.status})`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Fetch security audit logs
+ */
+export async function getAuditLogs(limit = 50, action?: string) {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (action) query.set('action', action);
+
+  const response = await secureFetch(`/api/v1/audit-logs?${query.toString()}`, {
+    method: 'GET',
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to load audit logs (HTTP ${response.status})`);
+  }
+
+  return response.json();
+}

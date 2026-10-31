@@ -15,12 +15,14 @@ import { IncidentsService } from './incidents.service';
 import { N8nIntegrationService } from '../n8n/n8n.service';
 import { CreateIncidentDto } from './dto/create-incident.dto';
 import { UpdateIncidentDto } from './dto/update-incident.dto';
+import { AssignIncidentDto } from './dto/assign-incident.dto';
+import { CreateCommentDto } from './dto/create-comment.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentOrg, CurrentUser, AuthenticatedUser } from '../auth/decorators/current-user.decorator';
 import { Role } from '@prisma/client';
-import { Incident, IncidentAnalysisRecord } from '@sentinelflow/shared';
+import { Incident, IncidentAnalysisRecord, IncidentTimelineEventRecord, OrgMember } from '@sentinelflow/shared';
 
 @ApiTags('Incidents')
 @Controller('incidents')
@@ -32,6 +34,14 @@ export class IncidentsController {
     private readonly incidentsService: IncidentsService,
     private readonly n8nService: N8nIntegrationService,
   ) {}
+
+  @Get('members')
+  @Roles(Role.VIEWER, Role.ANALYST, Role.ADMIN)
+  @ApiOperation({ summary: 'List security team members in the authorized organization' })
+  @ApiResponse({ status: 200, description: 'Returns array of verified organization members' })
+  async getOrgMembers(@CurrentOrg() orgId: string): Promise<OrgMember[]> {
+    return this.incidentsService.getOrgMembers(orgId);
+  }
 
   @Get()
   @Roles(Role.VIEWER, Role.ANALYST, Role.ADMIN)
@@ -66,7 +76,7 @@ export class IncidentsController {
     @CurrentOrg() orgId: string,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<Incident> {
-    return this.incidentsService.create(dto, orgId, user.id);
+    return this.incidentsService.create(dto, orgId, user.id, user);
   }
 
   @Patch(':id')
@@ -80,8 +90,55 @@ export class IncidentsController {
     @Param('id') id: string,
     @Body() dto: UpdateIncidentDto,
     @CurrentOrg() orgId: string,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<Incident> {
-    return this.incidentsService.update(id, dto, orgId);
+    return this.incidentsService.update(id, dto, orgId, user);
+  }
+
+  @Patch(':id/assign')
+  @Roles(Role.ANALYST, Role.ADMIN)
+  @ApiOperation({ summary: 'Assign incident to an analyst in the authorized organization' })
+  @ApiParam({ name: 'id', description: 'Incident ID' })
+  @ApiResponse({ status: 200, description: 'Incident successfully assigned' })
+  @ApiResponse({ status: 400, description: 'Target user is not a member of the organization' })
+  @ApiResponse({ status: 403, description: 'Insufficient role' })
+  @ApiResponse({ status: 404, description: 'Incident not found' })
+  async assign(
+    @Param('id') id: string,
+    @Body() dto: AssignIncidentDto,
+    @CurrentOrg() orgId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<Incident> {
+    return this.incidentsService.assign(id, dto.assignedToId, orgId, user);
+  }
+
+  @Get(':id/timeline')
+  @Roles(Role.VIEWER, Role.ANALYST, Role.ADMIN)
+  @ApiOperation({ summary: 'Retrieve investigation timeline events for an incident' })
+  @ApiParam({ name: 'id', description: 'Incident ID' })
+  @ApiResponse({ status: 200, description: 'Returns array of chronological timeline events' })
+  @ApiResponse({ status: 404, description: 'Incident not found' })
+  async getTimeline(
+    @Param('id') id: string,
+    @CurrentOrg() orgId: string,
+  ): Promise<IncidentTimelineEventRecord[]> {
+    return this.incidentsService.getTimeline(id, orgId);
+  }
+
+  @Post(':id/comments')
+  @Roles(Role.ANALYST, Role.ADMIN)
+  @ApiOperation({ summary: 'Post an analyst investigation note or comment to the incident timeline' })
+  @ApiParam({ name: 'id', description: 'Incident ID' })
+  @ApiResponse({ status: 201, description: 'Investigation comment successfully added' })
+  @ApiResponse({ status: 403, description: 'Insufficient role: VIEWER cannot comment' })
+  @ApiResponse({ status: 404, description: 'Incident not found' })
+  async addComment(
+    @Param('id') id: string,
+    @Body() dto: CreateCommentDto,
+    @CurrentOrg() orgId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<IncidentTimelineEventRecord> {
+    return this.incidentsService.addComment(id, dto.comment, orgId, user);
   }
 
   @Delete(':id')
@@ -94,8 +151,9 @@ export class IncidentsController {
   async delete(
     @Param('id') id: string,
     @CurrentOrg() orgId: string,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<{ success: boolean; id: string }> {
-    return this.incidentsService.delete(id, orgId);
+    return this.incidentsService.delete(id, orgId, user);
   }
 
   @Post(':id/analyze')

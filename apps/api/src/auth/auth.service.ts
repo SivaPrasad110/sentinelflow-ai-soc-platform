@@ -4,12 +4,14 @@ import {
   ConflictException,
   ForbiddenException,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as argon2 from 'argon2';
 import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
@@ -26,6 +28,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    @Optional() private readonly auditService?: AuditService,
   ) {}
 
   private hashToken(token: string): string {
@@ -232,6 +235,19 @@ export class AuthService {
       user.memberships,
     );
 
+    if (this.auditService) {
+      await this.auditService.log({
+        organizationId: activeMembership.organizationId,
+        userId: user.id,
+        userEmail: user.email,
+        action: 'AUTH_LOGIN',
+        entityType: 'AUTH',
+        entityId: user.id,
+        ipAddress: metadata?.ipAddress,
+        userAgent: metadata?.userAgent,
+      });
+    }
+
     return {
       accessToken,
       refreshToken: rawRefreshToken,
@@ -305,10 +321,29 @@ export class AuthService {
   async logout(refreshToken?: string): Promise<{ success: boolean }> {
     if (refreshToken) {
       const tokenHash = this.hashToken(refreshToken);
+      const session = await this.prisma.refreshSession.findUnique({
+        where: { tokenHash },
+        include: { user: { include: { memberships: true } } },
+      });
+
       await this.prisma.refreshSession.updateMany({
         where: { tokenHash, revokedAt: null },
         data: { revokedAt: new Date() },
       });
+
+      if (this.auditService && session?.user) {
+        const orgId = session.user.memberships[0]?.organizationId;
+        if (orgId) {
+          await this.auditService.log({
+            organizationId: orgId,
+            userId: session.user.id,
+            userEmail: session.user.email,
+            action: 'AUTH_LOGOUT',
+            entityType: 'AUTH',
+            entityId: session.user.id,
+          });
+        }
+      }
     }
     return { success: true };
   }

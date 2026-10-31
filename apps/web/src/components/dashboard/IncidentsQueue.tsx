@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, type FormEvent } from 'react';
 import {
   ShieldAlert,
   Plus,
@@ -14,11 +14,29 @@ import {
   ChevronUp,
   RefreshCw,
   CheckCircle2,
+  UserCheck,
+  MessageSquare,
+  Send,
 } from 'lucide-react';
-import type { Incident, AlertSeverity, IncidentAnalysisRecord } from '@sentinelflow/shared';
+import type {
+  Incident,
+  AlertSeverity,
+  IncidentStatus,
+  IncidentAnalysisRecord,
+  IncidentTimelineEventRecord,
+  OrgMember,
+} from '@sentinelflow/shared';
 import { useAuth } from '../../context/AuthContext';
 import { CreateIncidentModal } from './CreateIncidentModal';
-import { triggerIncidentAnalysis, getIncidentAnalyses } from '../../services/api';
+import {
+  triggerIncidentAnalysis,
+  getIncidentAnalyses,
+  getOrgMembers,
+  assignIncident,
+  updateIncidentStatus,
+  getIncidentTimeline,
+  addIncidentComment,
+} from '../../services/api';
 
 interface IncidentsQueueProps {
   incidents: Incident[];
@@ -49,6 +67,91 @@ export function IncidentsQueue({
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [historyList, setHistoryList] = useState<IncidentAnalysisRecord[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
+  // Phase 5: Assignment, Timeline, Status Updates
+  const [orgMembers, setOrgMembers] = useState<OrgMember[]>([]);
+  const [timeline, setTimeline] = useState<IncidentTimelineEventRecord[]>([]);
+  const [isLoadingTimeline, setIsLoadingTimeline] = useState(false);
+  const [newComment, setNewComment] = useState('');
+  const [isSubmittingComment, setIsSubmittingComment] = useState(false);
+  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+  const [isAssigning, setIsAssigning] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    getOrgMembers()
+      .then((members) => {
+        if (isMounted) setOrgMembers(members);
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const fetchTimeline = async (incidentId: string) => {
+    setIsLoadingTimeline(true);
+    try {
+      const events = await getIncidentTimeline(incidentId);
+      setTimeline(events);
+    } catch {
+      // safe fallback
+    } finally {
+      setIsLoadingTimeline(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedIncident) {
+      fetchTimeline(selectedIncident.id);
+    } else {
+      setTimeline([]);
+    }
+  }, [selectedIncident?.id]);
+
+  const handleStatusChange = async (newStatus: IncidentStatus) => {
+    if (!selectedIncident || !canAnalyze || isUpdatingStatus) return;
+    setIsUpdatingStatus(true);
+    try {
+      await updateIncidentStatus(selectedIncident.id, newStatus);
+      onRefresh();
+      fetchTimeline(selectedIncident.id);
+    } catch (err: any) {
+      alert(err.message || 'Failed to update incident status.');
+    } finally {
+      setIsUpdatingStatus(false);
+    }
+  };
+
+  const handleAssign = async (memberId: string) => {
+    if (!selectedIncident || !canAnalyze || isAssigning) return;
+    setIsAssigning(true);
+    try {
+      const assignedToId = memberId === '' ? null : memberId;
+      await assignIncident(selectedIncident.id, assignedToId);
+      onRefresh();
+      fetchTimeline(selectedIncident.id);
+    } catch (err: any) {
+      alert(err.message || 'Failed to assign incident.');
+    } finally {
+      setIsAssigning(false);
+    }
+  };
+
+  const handleCommentSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!selectedIncident || !canAnalyze || !newComment.trim() || isSubmittingComment) return;
+    setIsSubmittingComment(true);
+    try {
+      await addIncidentComment(selectedIncident.id, newComment.trim());
+      setNewComment('');
+      fetchTimeline(selectedIncident.id);
+    } catch (err: any) {
+      alert(err.message || 'Failed to post comment.');
+    } finally {
+      setIsSubmittingComment(false);
+    }
+  };
 
   const canCreate = activeRole === 'ANALYST' || activeRole === 'ADMIN';
   const canDelete = activeRole === 'ADMIN';
@@ -241,9 +344,26 @@ export function IncidentsQueue({
                     >
                       {selectedIncident.severity}
                     </span>
-                    <span className="text-xs px-2.5 py-1 rounded bg-sky-950 text-sky-400 border border-sky-800 font-mono">
-                      {selectedIncident.status}
-                    </span>
+                    {canAnalyze ? (
+                      <select
+                        value={selectedIncident.status}
+                        disabled={isUpdatingStatus}
+                        onChange={(e) => handleStatusChange(e.target.value as IncidentStatus)}
+                        className="text-xs px-2.5 py-1 rounded bg-sky-950 text-sky-300 border border-sky-700 font-mono font-semibold cursor-pointer hover:border-sky-500 focus:outline-none"
+                        title="Update Incident Lifecycle Status"
+                      >
+                        <option value="NEW">STATUS: NEW</option>
+                        <option value="TRIAGED">STATUS: TRIAGED</option>
+                        <option value="INVESTIGATING">STATUS: INVESTIGATING</option>
+                        <option value="CONTAINED">STATUS: CONTAINED</option>
+                        <option value="RESOLVED">STATUS: RESOLVED</option>
+                        <option value="CLOSED">STATUS: CLOSED</option>
+                      </select>
+                    ) : (
+                      <span className="text-xs px-2.5 py-1 rounded bg-sky-950 text-sky-400 border border-sky-800 font-mono">
+                        {selectedIncident.status}
+                      </span>
+                    )}
                   </div>
 
                   <div className="flex items-center space-x-2">
@@ -526,12 +646,134 @@ export function IncidentsQueue({
                 )}
               </div>
 
-              {/* Assigned info */}
-              <div className="pt-3 border-t border-slate-800 text-xs text-slate-400 flex items-center justify-between">
+              {/* Analyst Assignment Card */}
+              <div className="p-4 bg-slate-950/60 rounded-xl border border-slate-800 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center space-x-2 text-xs">
+                  <UserCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span className="text-slate-400 font-semibold">Incident Assignee:</span>
+                  {selectedIncident.assignedTo ? (
+                    <span className="text-emerald-300 font-medium font-mono">
+                      {selectedIncident.assignedTo}
+                      {selectedIncident.assignedToEmail ? ` (${selectedIncident.assignedToEmail})` : ''}
+                    </span>
+                  ) : (
+                    <span className="text-slate-500 italic">Unassigned</span>
+                  )}
+                </div>
+
+                {canAnalyze ? (
+                  <div className="flex items-center space-x-2 text-xs">
+                    <label className="text-slate-400 font-mono text-[11px]">Reassign:</label>
+                    <select
+                      value={selectedIncident.assignedToId || ''}
+                      disabled={isAssigning}
+                      onChange={(e) => handleAssign(e.target.value)}
+                      className="px-2.5 py-1 bg-slate-900 border border-slate-700 rounded-lg text-slate-200 text-xs focus:outline-none focus:border-emerald-500"
+                    >
+                      <option value="">Unassigned</option>
+                      {orgMembers.map((member, idx) => (
+                        <option key={member.userId || member.id || `member-${idx}`} value={member.userId}>
+                          {member.name} ({member.role})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <span className="text-[11px] text-slate-500 italic">Viewer: Read-only</span>
+                )}
+              </div>
+
+              {/* Investigation Timeline & Comments Panel */}
+              <div className="p-5 bg-slate-950/60 rounded-xl border border-slate-800 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2 text-xs font-bold uppercase tracking-wider text-slate-300">
+                    <MessageSquare className="w-4 h-4 text-emerald-400" />
+                    <span>Investigation Timeline & Activity ({timeline.length})</span>
+                  </div>
+                  <button
+                    onClick={() => fetchTimeline(selectedIncident.id)}
+                    disabled={isLoadingTimeline}
+                    className="text-xs text-slate-400 hover:text-white"
+                    title="Refresh Timeline"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isLoadingTimeline ? 'animate-spin' : ''}`} />
+                  </button>
+                </div>
+
+                {/* Timeline items list */}
+                {isLoadingTimeline ? (
+                  <div className="text-xs text-slate-500 py-2 italic">Loading timeline...</div>
+                ) : timeline.length === 0 ? (
+                  <div className="text-xs text-slate-500 py-2 italic">No timeline events recorded yet.</div>
+                ) : (
+                  <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+                    {timeline.map((event) => (
+                      <div key={event.id} className="p-3 bg-slate-900/90 rounded-lg border border-slate-800 text-xs space-y-1">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-2">
+                            <span
+                              className={`text-[10px] px-1.5 py-0.5 rounded font-mono font-bold ${
+                                event.type === 'STATUS_CHANGE'
+                                  ? 'bg-sky-950 text-sky-400 border border-sky-800'
+                                  : event.type === 'ASSIGNMENT'
+                                  ? 'bg-purple-950 text-purple-400 border border-purple-800'
+                                  : event.type === 'AI_ANALYSIS_COMPLETED'
+                                  ? 'bg-fuchsia-950 text-fuchsia-400 border border-fuchsia-800'
+                                  : event.type === 'COMMENT'
+                                  ? 'bg-amber-950 text-amber-400 border border-amber-800'
+                                  : 'bg-slate-800 text-slate-300 border border-slate-700'
+                              }`}
+                            >
+                              {event.type}
+                            </span>
+                            <span className="font-semibold text-slate-200">
+                              {event.userName || event.userEmail || 'System / Automation'}
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-slate-500 font-mono">
+                            {new Date(event.createdAt).toLocaleString()}
+                          </span>
+                        </div>
+                        <p className="text-slate-300 text-xs leading-relaxed pl-1">{event.message}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Add Comment Form */}
+                {canAnalyze ? (
+                  <form onSubmit={handleCommentSubmit} className="pt-2 border-t border-slate-800/80 flex items-center space-x-2">
+                    <input
+                      type="text"
+                      value={newComment}
+                      onChange={(e) => setNewComment(e.target.value)}
+                      placeholder="Add investigation note or hypothesis..."
+                      disabled={isSubmittingComment}
+                      className="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-slate-200 text-xs focus:outline-none focus:border-emerald-500"
+                    />
+                    <button
+                      type="submit"
+                      disabled={isSubmittingComment || !newComment.trim()}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-500 text-white rounded-lg text-xs font-semibold flex items-center space-x-1 transition shrink-0"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>Post</span>
+                    </button>
+                  </form>
+                ) : (
+                  <div className="pt-2 border-t border-slate-800/80 text-[11px] text-slate-500 italic flex items-center space-x-1.5">
+                    <Lock className="w-3.5 h-3.5 text-slate-600" />
+                    <span>Viewer mode: comments restricted to Analysts and Administrators.</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Timestamp footer */}
+              <div className="pt-2 border-t border-slate-800 text-[11px] font-mono text-slate-500 flex items-center justify-between">
                 <span>
-                  Assigned Analyst: <strong className="text-slate-200">{selectedIncident.assignedTo || 'Unassigned'}</strong>
+                  Acknowledged: {selectedIncident.acknowledgedAt ? new Date(selectedIncident.acknowledgedAt).toLocaleTimeString() : 'Pending'}
                 </span>
-                <span className="text-[11px] font-mono text-slate-500">
+                <span>
                   Updated: {new Date(selectedIncident.updatedAt).toLocaleTimeString()}
                 </span>
               </div>

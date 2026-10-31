@@ -108,6 +108,25 @@ describe('IncidentsController & IncidentsService (Scoped Multi-Tenancy)', () => 
         }),
         delete: jest.fn().mockResolvedValue(sampleIncident),
       },
+      incidentTimelineEvent: {
+        create: jest.fn().mockImplementation(({ data }) =>
+          Promise.resolve({
+            id: 'EVT-1',
+            ...data,
+            createdAt: new Date(),
+          }),
+        ),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      auditLog: {
+        create: jest.fn().mockImplementation(({ data }) =>
+          Promise.resolve({
+            id: 'AUD-1',
+            ...data,
+            createdAt: new Date(),
+          }),
+        ),
+      },
     };
 
     n8nMock = {
@@ -227,7 +246,7 @@ describe('IncidentsController & IncidentsService (Scoped Multi-Tenancy)', () => 
 
     it('should allow analyst to update an incident within their organization', async () => {
       const updateDto = { status: IncidentStatus.CONTAINED };
-      const updated = await controller.update('INC-2026-001', updateDto, currentOrgId);
+      const updated = await controller.update('INC-2026-001', updateDto, currentOrgId, mockAnalyst);
       expect(updated).toBeDefined();
       expect(prismaMock.incident.update).toHaveBeenCalled();
     });
@@ -235,7 +254,7 @@ describe('IncidentsController & IncidentsService (Scoped Multi-Tenancy)', () => 
 
   describe('Deletion', () => {
     it('should delete incident within authorized organization', async () => {
-      const result = await controller.delete('INC-2026-001', currentOrgId);
+      const result = await controller.delete('INC-2026-001', currentOrgId, mockAnalyst);
       expect(result.success).toBe(true);
       expect(prismaMock.incident.delete).toHaveBeenCalledWith({
         where: { id: 'INC-2026-001' },
@@ -244,7 +263,7 @@ describe('IncidentsController & IncidentsService (Scoped Multi-Tenancy)', () => 
 
     it('should prevent deleting foreign organization incident', async () => {
       await expect(
-        controller.delete('INC-2026-FOREIGN', currentOrgId),
+        controller.delete('INC-2026-FOREIGN', currentOrgId, mockAnalyst),
       ).rejects.toThrow(NotFoundException);
     });
   });

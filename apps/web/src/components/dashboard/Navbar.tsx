@@ -9,8 +9,10 @@ import {
   ChevronDown,
   Check,
   RefreshCw,
+  Zap,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { useSocket } from '../../context/SocketContext';
 import type { SystemHealthResponse, OrgRole } from '@sentinelflow/shared';
 
 interface NavbarProps {
@@ -21,6 +23,7 @@ interface NavbarProps {
 
 export function Navbar({ health, onRefresh, isLoading }: NavbarProps) {
   const { user, activeOrganization, activeRole, logout, switchOrganization } = useAuth();
+  const { isConnected } = useSocket();
   const [isOrgDropdownOpen, setIsOrgDropdownOpen] = useState(false);
 
   const getRoleBadge = (role: OrgRole | null) => {
@@ -66,6 +69,13 @@ export function Navbar({ health, onRefresh, isLoading }: NavbarProps) {
             <Database className="w-3.5 h-3.5 text-sky-400" />
             <span className="text-slate-400">DB:</span>
             <span className="text-sky-400 font-semibold">{health?.services.database || 'Connected'}</span>
+          </div>
+          <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded bg-slate-800/80 border border-slate-700">
+            <Zap className={`w-3.5 h-3.5 ${isConnected ? 'text-emerald-400' : 'text-amber-400'}`} />
+            <span className="text-slate-400">WS:</span>
+            <span className={`font-semibold ${isConnected ? 'text-emerald-400' : 'text-amber-400'}`}>
+              {isConnected ? 'Live' : 'Connecting'}
+            </span>
           </div>
           <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded bg-slate-800/80 border border-slate-700">
             <Workflow className="w-3.5 h-3.5 text-purple-400" />

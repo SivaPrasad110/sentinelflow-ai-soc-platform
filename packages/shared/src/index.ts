@@ -89,8 +89,90 @@ export interface Incident {
   aiAnalysis?: AIAnalysisResult;
   analyses?: IncidentAnalysisRecord[];
   assignedTo?: string;
+  assignedToId?: string;
+  assignedToName?: string;
+  assignedToEmail?: string;
+  acknowledgedAt?: string;
+  resolvedAt?: string;
+  closedAt?: string;
+  timeline?: IncidentTimelineEventRecord[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface IncidentTimelineEventRecord {
+  id: string;
+  incidentId: string;
+  organizationId: string;
+  type: 'COMMENT' | 'STATUS_CHANGE' | 'ASSIGNMENT' | 'ALERT_LINKED' | 'AI_ANALYSIS_COMPLETED' | 'ACTION_TAKEN';
+  message: string;
+  userId?: string;
+  userName?: string;
+  userEmail?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface AuditLogRecord {
+  id: string;
+  organizationId: string;
+  userId?: string;
+  userEmail?: string;
+  action: string;
+  entityType: string;
+  entityId?: string;
+  details?: Record<string, unknown>;
+  ipAddress?: string;
+  userAgent?: string;
+  createdAt: string;
+}
+
+export interface OrgMember {
+  id: string;
+  userId: string;
+  name: string;
+  email: string;
+  role: OrgRole;
+}
+
+export interface SOCMetricsResponse {
+  overview: {
+    totalIncidents: number;
+    openIncidents: number;
+    resolvedIncidents: number;
+    activeAlertsCount: number;
+    criticalIncidentsCount: number;
+    meanTimeToAcknowledgeMinutes: number; // MTTA in minutes
+    meanTimeToResolveMinutes: number; // MTTR in minutes
+  };
+  severityDistribution: {
+    CRITICAL: number;
+    HIGH: number;
+    MEDIUM: number;
+    LOW: number;
+  };
+  statusDistribution: Record<IncidentStatus, number>;
+  alertTrends: Array<{
+    date: string; // YYYY-MM-DD
+    count: number;
+    critical: number;
+    high: number;
+    medium: number;
+    low: number;
+  }>;
+  analystWorkload: Array<{
+    analystId: string;
+    analystName: string;
+    assignedCount: number;
+  }>;
+}
+
+export interface AssignIncidentPayload {
+  assignedToId: string | null;
+}
+
+export interface CreateCommentPayload {
+  comment: string;
 }
 
 export type AnalysisStatus = 'PENDING' | 'COMPLETED' | 'FAILED';

@@ -5,9 +5,12 @@ import {
   ConflictException,
   ServiceUnavailableException,
   BadGatewayException,
+  Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
+import { EventsGateway } from '../events/events.gateway';
 import { randomUUID } from 'crypto';
 import * as http from 'http';
 import * as https from 'https';
@@ -32,6 +35,8 @@ export class N8nIntegrationService {
   constructor(
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
+    @Optional() private readonly auditService?: AuditService,
+    @Optional() private readonly eventsGateway?: EventsGateway,
   ) {}
 
   /**
@@ -252,7 +257,62 @@ export class N8nIntegrationService {
         },
       });
 
-      return this.mapToSharedAnalysis(completedRecord);
+      // 10. Record Timeline Event and broadcast real-time events
+      const targetOrg = incident.organizationId || organizationId;
+      try {
+        const timelineMessage = `AI Incident Triage analysis completed (${triageSeverity} severity, ${Math.round(dto.confidence * 100)}% confidence). Advisory recommendations ready for human review.`;
+        const timelineRecord = await this.prisma.incidentTimelineEvent.create({
+          data: {
+            incidentId: incident.id,
+            organizationId: targetOrg,
+            type: 'AI_ANALYSIS_COMPLETED',
+            message: timelineMessage,
+            metadata: {
+              analysisId: completedRecord.id,
+              model,
+              severity: triageSeverity,
+              confidence: dto.confidence,
+              requiresHumanReview: dto.requires_human_review,
+            },
+          },
+        });
+
+        if (this.eventsGateway) {
+          this.eventsGateway.broadcastToOrg(targetOrg, 'incident:timeline_event', {
+            id: timelineRecord.id,
+            incidentId: incident.id,
+            organizationId: targetOrg,
+            type: 'AI_ANALYSIS_COMPLETED',
+            message: timelineMessage,
+            createdAt: timelineRecord.createdAt.toISOString(),
+          });
+        }
+      } catch (err: any) {
+        this.logger.warn(`Could not create timeline event for AI analysis: ${err.message}`);
+      }
+
+      if (this.auditService) {
+        await this.auditService.log({
+          organizationId: targetOrg,
+          userId,
+          action: 'TRIAGE_COMPLETED',
+          entityType: 'INCIDENT',
+          entityId: incident.id,
+          details: {
+            analysisId: completedRecord.id,
+            model,
+            confidence: dto.confidence,
+            severity: triageSeverity,
+          },
+        });
+      }
+
+      const sharedResult = this.mapToSharedAnalysis(completedRecord);
+      if (this.eventsGateway) {
+        this.eventsGateway.broadcastToOrg(targetOrg, 'incident:analysis_completed', sharedResult);
+      }
+
+      return sharedResult;
     } catch (err: any) {
       const errorMessage = err?.message || 'Unknown error occurred while contacting n8n';
       this.logger.error(`n8n triage failed for incident ${incidentId}: ${errorMessage}`);

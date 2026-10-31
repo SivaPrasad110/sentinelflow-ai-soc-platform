@@ -7,20 +7,26 @@ import {
   Flame,
   AlertTriangle,
   CheckCircle2,
+  BarChart3,
+  ScrollText,
 } from 'lucide-react';
 import type { Incident, SecurityAlert, SystemHealthResponse } from '@sentinelflow/shared';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { SocketProvider, useSocket } from './context/SocketContext';
 import { secureFetch } from './services/api';
 import { LoginPage } from './components/auth/LoginPage';
 import { Navbar } from './components/dashboard/Navbar';
 import { IncidentsQueue } from './components/dashboard/IncidentsQueue';
 import { AlertsStream } from './components/dashboard/AlertsStream';
 import { N8nPlaybooks } from './components/dashboard/N8nPlaybooks';
+import { SocAnalyticsView } from './components/dashboard/SocAnalyticsView';
+import { AuditLogsView } from './components/dashboard/AuditLogsView';
 
 function Dashboard() {
   const { activeOrganization, activeRole } = useAuth();
+  const { socket } = useSocket();
 
-  const [activeTab, setActiveTab] = useState<'incidents' | 'alerts' | 'n8n'>('incidents');
+  const [activeTab, setActiveTab] = useState<'incidents' | 'alerts' | 'analytics' | 'audit' | 'n8n'>('incidents');
   const [health, setHealth] = useState<SystemHealthResponse | null>(null);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [alerts, setAlerts] = useState<SecurityAlert[]>([]);
@@ -106,6 +112,96 @@ function Dashboard() {
     fetchIncidents();
     fetchAlerts();
   }, [activeOrganization, fetchHealth, fetchIncidents, fetchAlerts]);
+
+  // Phase 5: Real-time WebSocket updates without refreshing the page
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleAlertCreated = (newAlert: SecurityAlert) => {
+      setAlerts((prev) => {
+        if (prev.some((a) => a.id === newAlert.id)) return prev;
+        return [newAlert, ...prev];
+      });
+    };
+
+    const handleIncidentCreated = (newIncident: Incident) => {
+      setIncidents((prev) => {
+        if (prev.some((i) => i.id === newIncident.id)) return prev;
+        return [newIncident, ...prev];
+      });
+    };
+
+    const handleIncidentUpdated = (updated: Incident) => {
+      setIncidents((prev) => prev.map((i) => (i.id === updated.id ? { ...i, ...updated } : i)));
+      setSelectedIncident((prev) => (prev?.id === updated.id ? { ...prev, ...updated } : prev));
+    };
+
+    const handleIncidentAssigned = (data: {
+      incidentId: string;
+      assignedToId: string | null;
+      assignedToName?: string;
+      assignedToEmail?: string;
+    }) => {
+      setIncidents((prev) =>
+        prev.map((i) =>
+          i.id === data.incidentId
+            ? {
+                ...i,
+                assignedToId: data.assignedToId || undefined,
+                assignedToName: data.assignedToName,
+                assignedToEmail: data.assignedToEmail,
+                assignedTo: data.assignedToName || (data.assignedToId ? 'Assigned' : 'Unassigned'),
+              }
+            : i,
+        ),
+      );
+      setSelectedIncident((prev) =>
+        prev?.id === data.incidentId
+          ? {
+              ...prev,
+              assignedToId: data.assignedToId || undefined,
+              assignedToName: data.assignedToName,
+              assignedToEmail: data.assignedToEmail,
+              assignedTo: data.assignedToName || (data.assignedToId ? 'Assigned' : 'Unassigned'),
+            }
+          : prev,
+      );
+    };
+
+    const handleAnalysisCompleted = (data: { incidentId: string; analysis: any }) => {
+      setIncidents((prev) =>
+        prev.map((i) =>
+          i.id === data.incidentId ? { ...i, analyses: [data.analysis, ...(i.analyses || [])] } : i,
+        ),
+      );
+      setSelectedIncident((prev) =>
+        prev?.id === data.incidentId
+          ? { ...prev, analyses: [data.analysis, ...(prev.analyses || [])] }
+          : prev,
+      );
+    };
+
+    const handleIncidentDeleted = (data: { id: string }) => {
+      setIncidents((prev) => prev.filter((i) => i.id !== data.id));
+      setSelectedIncident((prev) => (prev?.id === data.id ? null : prev));
+    };
+
+    socket.on('alert:created', handleAlertCreated);
+    socket.on('incident:created', handleIncidentCreated);
+    socket.on('incident:updated', handleIncidentUpdated);
+    socket.on('incident:assigned', handleIncidentAssigned);
+    socket.on('incident:analysis_completed', handleAnalysisCompleted);
+    socket.on('incident:deleted', handleIncidentDeleted);
+
+    return () => {
+      socket.off('alert:created', handleAlertCreated);
+      socket.off('incident:created', handleIncidentCreated);
+      socket.off('incident:updated', handleIncidentUpdated);
+      socket.off('incident:assigned', handleIncidentAssigned);
+      socket.off('incident:analysis_completed', handleAnalysisCompleted);
+      socket.off('incident:deleted', handleIncidentDeleted);
+    };
+  }, [socket]);
 
   const handleRefreshAll = () => {
     fetchHealth();
@@ -270,6 +366,30 @@ function Dashboard() {
           </button>
 
           <button
+            onClick={() => setActiveTab('analytics')}
+            className={`pb-3 text-sm font-semibold flex items-center space-x-2 transition border-b-2 ${
+              activeTab === 'analytics'
+                ? 'border-emerald-500 text-emerald-400'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <BarChart3 className="w-4 h-4" />
+            <span>SOC Analytics & MTTA/R</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('audit')}
+            className={`pb-3 text-sm font-semibold flex items-center space-x-2 transition border-b-2 ${
+              activeTab === 'audit'
+                ? 'border-emerald-500 text-emerald-400'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <ScrollText className="w-4 h-4" />
+            <span>Security Audit Log</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('n8n')}
             className={`pb-3 text-sm font-semibold flex items-center space-x-2 transition border-b-2 ${
               activeTab === 'n8n'
@@ -306,6 +426,10 @@ function Dashboard() {
           />
         )}
 
+        {activeTab === 'analytics' && <SocAnalyticsView />}
+
+        {activeTab === 'audit' && <AuditLogsView />}
+
         {activeTab === 'n8n' && <N8nPlaybooks />}
       </main>
     </div>
@@ -336,7 +460,9 @@ function AppContent() {
 export default function App() {
   return (
     <AuthProvider>
-      <AppContent />
+      <SocketProvider>
+        <AppContent />
+      </SocketProvider>
     </AuthProvider>
   );
 }

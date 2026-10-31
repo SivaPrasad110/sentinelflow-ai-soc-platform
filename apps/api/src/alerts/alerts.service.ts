@@ -2,8 +2,11 @@ import {
   Injectable,
   NotFoundException,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
+import { EventsGateway } from '../events/events.gateway';
 import { IngestAlertDto } from './dto/ingest-alert.dto';
 import { UpdateAlertDto } from './dto/update-alert.dto';
 import { SecurityAlert as SharedAlert, AlertSeverity } from '@sentinelflow/shared';
@@ -13,7 +16,11 @@ import { SecurityAlert as PrismaAlert } from '@prisma/client';
 export class AlertsService {
   private readonly logger = new Logger(AlertsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly auditService?: AuditService,
+    @Optional() private readonly eventsGateway?: EventsGateway,
+  ) {}
 
   private mapToSharedAlert(alert: PrismaAlert): SharedAlert {
     return {
@@ -75,7 +82,21 @@ export class AlertsService {
       },
     });
 
-    return this.mapToSharedAlert(alert);
+    if (this.auditService) {
+      await this.auditService.log({
+        organizationId,
+        action: 'ALERT_CREATE',
+        entityType: 'ALERT',
+        entityId: alert.id,
+        details: { title: alert.title, severity: alert.severity, source: alert.source },
+      });
+    }
+
+    const shared = this.mapToSharedAlert(alert);
+    if (this.eventsGateway) {
+      this.eventsGateway.broadcastToOrg(organizationId, 'alert:created', shared);
+    }
+    return shared;
   }
 
   async update(id: string, dto: UpdateAlertDto, organizationId: string): Promise<SharedAlert> {
