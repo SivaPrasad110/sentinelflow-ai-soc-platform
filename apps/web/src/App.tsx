@@ -9,6 +9,8 @@ import {
   CheckCircle2,
   BarChart3,
   ScrollText,
+  Globe,
+  Sliders,
 } from 'lucide-react';
 import type { Incident, SecurityAlert, SystemHealthResponse } from '@sentinelflow/shared';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -21,12 +23,14 @@ import { AlertsStream } from './components/dashboard/AlertsStream';
 import { N8nPlaybooks } from './components/dashboard/N8nPlaybooks';
 import { SocAnalyticsView } from './components/dashboard/SocAnalyticsView';
 import { AuditLogsView } from './components/dashboard/AuditLogsView';
+import { ThreatIntelView } from './components/dashboard/ThreatIntelView';
+import { DetectionEngineView } from './components/dashboard/DetectionEngineView';
 
 function Dashboard() {
   const { activeOrganization, activeRole } = useAuth();
   const { socket } = useSocket();
 
-  const [activeTab, setActiveTab] = useState<'incidents' | 'alerts' | 'analytics' | 'audit' | 'n8n'>('incidents');
+  const [activeTab, setActiveTab] = useState<'incidents' | 'alerts' | 'analytics' | 'audit' | 'intel' | 'detections' | 'n8n'>('incidents');
   const [health, setHealth] = useState<SystemHealthResponse | null>(null);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [alerts, setAlerts] = useState<SecurityAlert[]>([]);
@@ -366,6 +370,30 @@ function Dashboard() {
           </button>
 
           <button
+            onClick={() => setActiveTab('intel')}
+            className={`pb-3 text-sm font-semibold flex items-center space-x-2 transition border-b-2 ${
+              activeTab === 'intel'
+                ? 'border-emerald-500 text-emerald-400'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Globe className="w-4 h-4" />
+            <span>Threat Intel & Feeds</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('detections')}
+            className={`pb-3 text-sm font-semibold flex items-center space-x-2 transition border-b-2 ${
+              activeTab === 'detections'
+                ? 'border-emerald-500 text-emerald-400'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Sliders className="w-4 h-4" />
+            <span>Detections & MITRE</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('analytics')}
             className={`pb-3 text-sm font-semibold flex items-center space-x-2 transition border-b-2 ${
               activeTab === 'analytics'
@@ -423,6 +451,17 @@ function Dashboard() {
             error={alertsError}
             onRefresh={fetchAlerts}
             onIngestAlert={handleIngestAlert}
+          />
+        )}
+
+        {activeTab === 'intel' && <ThreatIntelView />}
+
+        {activeTab === 'detections' && (
+          <DetectionEngineView
+            onIncidentCreated={() => {
+              fetchIncidents();
+              setActiveTab('incidents');
+            }}
           />
         )}
 

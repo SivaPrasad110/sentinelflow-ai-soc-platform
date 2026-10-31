@@ -11,6 +11,9 @@ import { IncidentsModule } from './incidents/incidents.module';
 import { AlertsModule } from './alerts/alerts.module';
 import { N8nIntegrationModule } from './n8n/n8n.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { IocModule } from './ioc/ioc.module';
+import { ThreatIntelModule } from './threat-intel/threat-intel.module';
+import { DetectionModule } from './detection/detection.module';
 
 @Module({
   imports: [
@@ -33,6 +36,9 @@ import { AnalyticsModule } from './analytics/analytics.module';
     AlertsModule,
     N8nIntegrationModule,
     AnalyticsModule,
+    IocModule,
+    ThreatIntelModule,
+    DetectionModule,
   ],
   providers: [
     {

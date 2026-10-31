@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { EventsGateway } from '../events/events.gateway';
+import { DetectionService } from '../detection/detection.service';
 import { IngestAlertDto } from './dto/ingest-alert.dto';
 import { UpdateAlertDto } from './dto/update-alert.dto';
 import { SecurityAlert as SharedAlert, AlertSeverity } from '@sentinelflow/shared';
@@ -20,6 +21,7 @@ export class AlertsService {
     private readonly prisma: PrismaService,
     @Optional() private readonly auditService?: AuditService,
     @Optional() private readonly eventsGateway?: EventsGateway,
+    @Optional() private readonly detectionService?: DetectionService,
   ) {}
 
   private mapToSharedAlert(alert: PrismaAlert): SharedAlert {
@@ -96,6 +98,16 @@ export class AlertsService {
     if (this.eventsGateway) {
       this.eventsGateway.broadcastToOrg(organizationId, 'alert:created', shared);
     }
+
+    // Evaluate detection rules and correlate findings
+    if (this.detectionService) {
+      try {
+        await this.detectionService.evaluateAlert(alert, organizationId);
+      } catch (err: any) {
+        this.logger.error(`Error evaluating detection rules for alert ${alert.id}: ${err.message}`, err.stack);
+      }
+    }
+
     return shared;
   }
 

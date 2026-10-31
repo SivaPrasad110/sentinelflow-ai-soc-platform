@@ -268,3 +268,216 @@ export async function getAuditLogs(limit = 50, action?: string) {
 
   return response.json();
 }
+
+// ==========================================
+// Phase 6: Threat Intelligence & IOC APIs
+// ==========================================
+
+export async function getIocs(params?: { query?: string; type?: string; severity?: string; limit?: number }) {
+  const query = new URLSearchParams();
+  if (params?.query) query.set('query', params.query);
+  if (params?.type) query.set('type', params.type);
+  if (params?.severity) query.set('severity', params.severity);
+  if (params?.limit) query.set('limit', String(params.limit));
+
+  const response = await secureFetch(`/api/v1/iocs?${query.toString()}`, { method: 'GET' });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to load indicators of compromise (HTTP ${response.status})`);
+  }
+  return response.json();
+}
+
+export async function getIocById(id: string) {
+  const response = await secureFetch(`/api/v1/iocs/${id}`, { method: 'GET' });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to load IOC (HTTP ${response.status})`);
+  }
+  return response.json();
+}
+
+export async function createIoc(payload: any) {
+  const response = await secureFetch('/api/v1/iocs', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to create IOC (HTTP ${response.status})`);
+  }
+  return response.json();
+}
+
+export async function deleteIoc(id: string) {
+  const response = await secureFetch(`/api/v1/iocs/${id}`, { method: 'DELETE' });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to delete IOC (HTTP ${response.status})`);
+  }
+  return response.json();
+}
+
+export async function getThreatFeeds() {
+  const response = await secureFetch('/api/v1/threat-intel/feeds', { method: 'GET' });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to load threat feeds (HTTP ${response.status})`);
+  }
+  return response.json();
+}
+
+export async function createThreatFeed(payload: any) {
+  const response = await secureFetch('/api/v1/threat-intel/feeds', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to create threat feed (HTTP ${response.status})`);
+  }
+  return response.json();
+}
+
+export async function syncThreatFeed(feedId: string) {
+  const response = await secureFetch(`/api/v1/threat-intel/feeds/${feedId}/sync`, { method: 'POST' });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to sync feed (HTTP ${response.status})`);
+  }
+  return response.json();
+}
+
+export async function getThreatIntelStats() {
+  const response = await secureFetch('/api/v1/threat-intel/stats', { method: 'GET' });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to load threat intel stats (HTTP ${response.status})`);
+  }
+  return response.json();
+}
+
+// ==========================================
+// Phase 6: Detection Engine & Rules APIs
+// ==========================================
+
+export async function getDetectionRules() {
+  const response = await secureFetch('/api/v1/detection/rules', { method: 'GET' });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to load detection rules (HTTP ${response.status})`);
+  }
+  return response.json();
+}
+
+export async function getDetectionRuleById(id: string) {
+  const response = await secureFetch(`/api/v1/detection/rules/${id}`, { method: 'GET' });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to load detection rule (HTTP ${response.status})`);
+  }
+  return response.json();
+}
+
+export async function createDetectionRule(payload: any) {
+  const response = await secureFetch('/api/v1/detection/rules', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to create detection rule (HTTP ${response.status})`);
+  }
+  return response.json();
+}
+
+export async function updateDetectionRule(id: string, payload: any) {
+  const response = await secureFetch(`/api/v1/detection/rules/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to update detection rule (HTTP ${response.status})`);
+  }
+  return response.json();
+}
+
+export async function toggleDetectionRule(id: string, enabled?: boolean) {
+  const response = await secureFetch(`/api/v1/detection/rules/${id}/toggle`, {
+    method: 'PATCH',
+    body: JSON.stringify({ enabled }),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to toggle detection rule (HTTP ${response.status})`);
+  }
+  return response.json();
+}
+
+export async function deleteDetectionRule(id: string) {
+  const response = await secureFetch(`/api/v1/detection/rules/${id}`, { method: 'DELETE' });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to delete detection rule (HTTP ${response.status})`);
+  }
+  return response.json();
+}
+
+export async function getMitreMatrix() {
+  const response = await secureFetch('/api/v1/detection/mitre/matrix', { method: 'GET' });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to load MITRE ATT&CK matrix (HTTP ${response.status})`);
+  }
+  return response.json();
+}
+
+export async function getMitreTechniques() {
+  const response = await secureFetch('/api/v1/detection/mitre/techniques', { method: 'GET' });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to load MITRE techniques (HTTP ${response.status})`);
+  }
+  return response.json();
+}
+
+// ==========================================
+// Phase 6: Correlated Findings APIs
+// ==========================================
+
+export async function getFindings(params?: { status?: string; severity?: string }) {
+  const query = new URLSearchParams();
+  if (params?.status) query.set('status', params.status);
+  if (params?.severity) query.set('severity', params.severity);
+
+  const response = await secureFetch(`/api/v1/detection/findings?${query.toString()}`, { method: 'GET' });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to load findings (HTTP ${response.status})`);
+  }
+  return response.json();
+}
+
+export async function promoteFindingToIncident(findingId: string) {
+  const response = await secureFetch(`/api/v1/detection/findings/${findingId}/promote`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to promote finding to incident (HTTP ${response.status})`);
+  }
+  return response.json();
+}
+
+export async function dismissFinding(findingId: string, reason?: string) {
+  const response = await secureFetch(`/api/v1/detection/findings/${findingId}/dismiss`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to dismiss finding (HTTP ${response.status})`);
+  }
+  return response.json();
+}

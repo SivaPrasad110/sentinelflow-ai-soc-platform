@@ -59,6 +59,10 @@ model Organization {
   incidentAnalyses IncidentAnalysis[]
   timelineEvents   IncidentTimelineEvent[]
   auditLogs        AuditLog[]
+  iocs             IndicatorOfCompromise[]
+  threatFeeds      ThreatFeed[]
+  detectionRules   DetectionRule[]
+  securityFindings SecurityFinding[]
 }
 
 model OrganizationMembership {
@@ -166,18 +170,112 @@ model Incident {
 }
 
 model IndicatorOfCompromise {
-  id           String    @id @default(uuid())
-  type         IOCType
-  value        String
-  threatScore  Float?
-  enrichedData Json?
-  incidentId   String
-  incident     Incident  @relation(fields: [incidentId], references: [id], onDelete: Cascade)
-  createdAt    DateTime  @default(now())
+  id              String        @id @default(uuid())
+  type            IOCType
+  value           String
+  threatScore     Float?
+  confidence      Float?        @default(0.8)
+  severity        Severity      @default(MEDIUM)
+  source          String?       @default("MANUAL")
+  description     String?
+  organizationId  String?
+  organization    Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  incidentId      String?
+  incident        Incident?     @relation(fields: [incidentId], references: [id], onDelete: SetNull)
+  firstSeen       DateTime      @default(now())
+  lastSeen        DateTime      @default(now())
+  tags            String[]      @default([])
+  mitreTactics    String[]      @default([])
+  mitreTechniques String[]      @default([])
+  isActive        Boolean       @default(true)
+  rawFeedData     Json?
+  enrichedData    Json?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @default(now()) @updatedAt
 
   @@index([incidentId])
+  @@index([organizationId])
   @@index([value])
   @@index([type])
+  @@index([severity])
+  @@index([source])
+  @@index([isActive])
+}
+
+model ThreatFeed {
+  id             String        @id @default(uuid())
+  name           String
+  feedUrl        String
+  feedType       String        @default("CUSTOM")
+  format         String        @default("JSON")
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  enabled        Boolean       @default(true)
+  lastFetchedAt  DateTime?
+  itemCount      Int           @default(0)
+  status         String        @default("IDLE")
+  errorMessage   String?
+  scheduleCron   String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([organizationId])
+  @@index([feedType])
+  @@index([status])
+}
+
+model DetectionRule {
+  id               String            @id @default(uuid())
+  name             String
+  description      String
+  organizationId   String
+  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  severity         Severity          @default(HIGH)
+  ruleType         String            @default("PATTERN")
+  criteria         Json
+  mitreTactic      String?
+  mitreTechnique   String?
+  mitreTechniqueId String?
+  enabled          Boolean           @default(true)
+  lastTriggeredAt  DateTime?
+  triggerCount     Int               @default(0)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  findings         SecurityFinding[]
+
+  @@index([organizationId])
+  @@index([ruleType])
+  @@index([enabled])
+}
+
+model SecurityFinding {
+  id               String         @id @default(uuid())
+  organizationId   String
+  organization     Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  ruleId           String?
+  rule             DetectionRule? @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  title            String
+  description      String
+  severity         Severity       @default(HIGH)
+  riskScore        Float          @default(50.0)
+  riskBreakdown    Json?
+  evidence         Json           @default("{}")
+  mitreTactic      String?
+  mitreTechnique   String?
+  mitreTechniqueId String?
+  alertId          String?
+  incidentId       String?
+  fingerprint      String
+  status           String         @default("NEW")
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([organizationId])
+  @@index([ruleId])
+  @@index([fingerprint])
+  @@index([status])
+  @@index([severity])
+  @@index([createdAt])
 }
 
 model WorkflowExecutionLog {
