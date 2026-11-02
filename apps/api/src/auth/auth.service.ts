@@ -3,6 +3,8 @@ import {
   UnauthorizedException,
   ConflictException,
   ForbiddenException,
+  InternalServerErrorException,
+  HttpException,
   Logger,
   Optional,
 } from '@nestjs/common';
@@ -15,7 +17,7 @@ import { AuditService } from '../audit/audit.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
-import { Role } from '@prisma/client';
+import { Role, Prisma } from '@prisma/client';
 import { AuthResponse, UserProfile, OrganizationMembership as SharedMembership } from '@sentinelflow/shared';
 
 @Injectable()
@@ -69,19 +71,65 @@ export class AuthService {
     };
   }
 
+  private isPrismaP2002(error: any): boolean {
+    return (
+      error?.code === 'P2002' ||
+      (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')
+    );
+  }
+
+  private getP2002Targets(error: any): string[] {
+    const target = error?.meta?.target;
+    if (Array.isArray(target)) {
+      return target.map((t: string) => String(t).toLowerCase());
+    }
+    if (typeof target === 'string') {
+      return [target.toLowerCase()];
+    }
+    const message = String(error?.message || '').toLowerCase();
+    return [message];
+  }
+
+  private isPrismaEmailConflict(error: any): boolean {
+    if (!this.isPrismaP2002(error)) return false;
+    const targets = this.getP2002Targets(error);
+    return targets.some((t) => t.includes('email') || t.includes('user_email_key'));
+  }
+
+  private isPrismaSlugConflict(error: any): boolean {
+    if (!this.isPrismaP2002(error)) return false;
+    const targets = this.getP2002Targets(error);
+    return targets.some((t) => t.includes('slug') || t.includes('organization_slug_key'));
+  }
+
+  private logSafeRegistrationError(
+    error: any,
+    email: string,
+    organizationName?: string,
+  ): void {
+    // Safe structured logging: NEVER logs password, passwordHash, rawRefreshToken, JWT, or database URLs
+    this.logger.error(
+      `Registration failed for email [${email}] (org: [${organizationName || 'N/A'}]): ${error?.name} [code: ${error?.code || 'N/A'}] - ${error?.message}`,
+      error?.stack,
+    );
+  }
+
   async register(
     dto: RegisterDto,
     metadata?: { userAgent?: string; ipAddress?: string },
   ): Promise<AuthResponse & { refreshToken: string }> {
+    const normalizedEmail = dto.email.toLowerCase().trim();
+
+    // 1. Initial fast pre-check outside transaction
     const existing = await this.prisma.user.findUnique({
-      where: { email: dto.email.toLowerCase().trim() },
+      where: { email: normalizedEmail },
     });
 
     if (existing) {
       throw new ConflictException('An account with this email address already exists.');
     }
 
-    // 1. Hash password with Argon2id
+    // 2. Hash password with Argon2id
     const passwordHash = await argon2.hash(dto.password, {
       type: argon2.argon2id,
       memoryCost: 65536,
@@ -89,43 +137,130 @@ export class AuthService {
       parallelism: 4,
     });
 
-    // 2. Create Organization, User, and Membership atomically
-    const slug = dto.organizationName
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '') || `org-${Date.now()}`;
+    // 3. Base slug computation
+    const baseSlug =
+      dto.organizationName
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'org';
 
-    const created = await this.prisma.$transaction(async (tx) => {
-      const org = await tx.organization.create({
-        data: {
-          name: dto.organizationName.trim(),
-          slug,
-        },
-      });
+    // 4. Prepare refresh token parameters before transaction
+    const rawRefreshToken = this.generateSecureToken();
+    const tokenHash = this.hashToken(rawRefreshToken);
+    const expiresAt = new Date(Date.now() + this.refreshTokenExpiryDays * 24 * 60 * 60 * 1000);
 
-      const user = await tx.user.create({
-        data: {
-          email: dto.email.toLowerCase().trim(),
-          name: dto.name.trim(),
-          passwordHash,
-          tenantId: org.id,
-        },
-      });
+    // 5. Collision-safe slug generation with bounded retry strategy inside transaction
+    const MAX_SLUG_RETRIES = 5;
+    let created: {
+      user: any;
+      org: any;
+      membership: any;
+    } | null = null;
 
-      const membership = await tx.organizationMembership.create({
-        data: {
-          userId: user.id,
-          organizationId: org.id,
-          role: Role.ADMIN,
-        },
-        include: { organization: true },
-      });
+    for (let attempt = 0; attempt < MAX_SLUG_RETRIES; attempt++) {
+      let candidateSlug = baseSlug;
+      if (attempt > 0) {
+        // Disambiguate with collision-resistant hex entropy on retry
+        const entropy = crypto.randomBytes(3).toString('hex');
+        candidateSlug = `${baseSlug}-${entropy}`;
+      } else {
+        // On initial attempt, check if baseSlug is already taken to avoid an unnecessary transaction rollback
+        try {
+          const slugExists = await this.prisma.organization.findUnique({
+            where: { slug: baseSlug },
+          });
+          if (slugExists) {
+            const entropy = crypto.randomBytes(3).toString('hex');
+            candidateSlug = `${baseSlug}-${entropy}`;
+          }
+        } catch {
+          // Non-fatal pre-check error, proceed to transaction
+        }
+      }
 
-      return { user, org, membership };
-    });
+      try {
+        created = await this.prisma.$transaction(async (tx) => {
+          const org = await tx.organization.create({
+            data: {
+              name: dto.organizationName.trim(),
+              slug: candidateSlug,
+            },
+          });
 
-    // 3. Issue Token Pair
+          const user = await tx.user.create({
+            data: {
+              email: normalizedEmail,
+              name: dto.name.trim(),
+              passwordHash,
+              tenantId: org.id,
+            },
+          });
+
+          const membership = await tx.organizationMembership.create({
+            data: {
+              userId: user.id,
+              organizationId: org.id,
+              role: Role.ADMIN,
+            },
+            include: { organization: true },
+          });
+
+          await tx.refreshSession.create({
+            data: {
+              userId: user.id,
+              tokenHash,
+              userAgent: metadata?.userAgent,
+              ipAddress: metadata?.ipAddress,
+              expiresAt,
+            },
+          });
+
+          return { user, org, membership };
+        });
+
+        // Transaction committed successfully
+        break;
+      } catch (error: any) {
+        // Handle Prisma unique constraint collision (P2002)
+        if (this.isPrismaSlugConflict(error)) {
+          this.logger.warn(
+            `Organization slug collision on [${candidateSlug}] (attempt ${attempt + 1}/${MAX_SLUG_RETRIES}) for organization [${dto.organizationName.trim()}]. Retrying with disambiguated slug.`,
+          );
+          if (attempt === MAX_SLUG_RETRIES - 1) {
+            this.logger.error(
+              `Organization slug retries exhausted (${MAX_SLUG_RETRIES}) for [${dto.organizationName.trim()}]. Returning 409 Conflict.`,
+            );
+            throw new ConflictException(
+              'An organization with this name already exists. Please choose a different organization name.',
+            );
+          }
+          continue;
+        }
+
+        if (this.isPrismaEmailConflict(error)) {
+          this.logger.warn(
+            `Concurrent registration conflict: duplicate email detected on [${normalizedEmail}]. Returning 409 Conflict.`,
+          );
+          throw new ConflictException('An account with this email address already exists.');
+        }
+
+        // Safe logging of any unexpected database or system failure
+        this.logSafeRegistrationError(error, normalizedEmail, dto.organizationName);
+
+        if (error instanceof HttpException) {
+          throw error;
+        }
+
+        throw new InternalServerErrorException('An unexpected error occurred during account registration.');
+      }
+    }
+
+    if (!created) {
+      throw new InternalServerErrorException('Registration could not be completed.');
+    }
+
+    // 6. Issue signed short-lived Access Token
     const accessToken = this.jwtService.sign(
       {
         sub: created.user.id,
@@ -134,20 +269,6 @@ export class AuthService {
       },
       { expiresIn: this.accessTokenExpiry },
     );
-
-    const rawRefreshToken = this.generateSecureToken();
-    const tokenHash = this.hashToken(rawRefreshToken);
-    const expiresAt = new Date(Date.now() + this.refreshTokenExpiryDays * 24 * 60 * 60 * 1000);
-
-    await this.prisma.refreshSession.create({
-      data: {
-        userId: created.user.id,
-        tokenHash,
-        userAgent: metadata?.userAgent,
-        ipAddress: metadata?.ipAddress,
-        expiresAt,
-      },
-    });
 
     const userProfile = this.mapUserProfile(
       created.user,
