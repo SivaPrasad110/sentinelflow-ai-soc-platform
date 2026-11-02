@@ -56,13 +56,25 @@ function evaluateCriterion(targetValue: any, operator: string, ruleValue: any): 
       return String(targetValue).toLowerCase().includes(String(ruleValue).toLowerCase());
     case 'STARTS_WITH':
       return String(targetValue).toLowerCase().startsWith(String(ruleValue).toLowerCase());
-    case 'REGEX':
+    case 'REGEX': {
+      // S5 fix: ReDoS guard — reject patterns with dangerous nested quantifiers
+      // or excessive length that could cause catastrophic backtracking.
+      const pattern = String(ruleValue);
+      if (pattern.length > 300) {
+        return false; // Pattern too long — refuse silently
+      }
+      // Detect common ReDoS patterns: (x+)+, (x*)+, (x|x)*, (x+)*
+      const redosPattern = /(\(.*[+*]\))[+*]|(\([^)]*\|[^)]*\))[+*]/;
+      if (redosPattern.test(pattern)) {
+        return false; // Dangerous nested quantifier detected — refuse silently
+      }
       try {
-        const regex = new RegExp(String(ruleValue), 'i');
+        const regex = new RegExp(pattern, 'i');
         return regex.test(String(targetValue));
       } catch {
         return false;
       }
+    }
     case 'IN':
       if (Array.isArray(ruleValue)) {
         return ruleValue.map((v) => String(v).toLowerCase()).includes(String(targetValue).toLowerCase());

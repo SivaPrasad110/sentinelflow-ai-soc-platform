@@ -15,8 +15,10 @@ out/
 .env.development.local
 .env.test.local
 .env.production.local
+.env.production        # Production secrets — NEVER commit
 *.env
 !.env.example
+!.env.production.example
 
 # Logs
 logs/

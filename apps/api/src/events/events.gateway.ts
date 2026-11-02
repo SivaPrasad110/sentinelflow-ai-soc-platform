@@ -20,9 +20,20 @@ interface AuthenticatedSocket extends Socket {
   orgMemberships?: string[];
 }
 
+// S2 fix: WebSocket CORS reads the same CORS_ORIGIN env var as the HTTP server.
+// Supports comma-separated origins for multi-domain deployments.
+const wsOriginEnv = process.env.CORS_ORIGIN || 'http://localhost:5173';
+const wsAllowedOrigins = wsOriginEnv.split(',').map((o) => o.trim());
+
 @WebSocketGateway({
   cors: {
-    origin: '*',
+    origin: (origin: string, callback: (err: Error | null, allow?: boolean) => void) => {
+      if (!origin || wsAllowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error(`WebSocket CORS: origin "${origin}" not allowed`));
+      }
+    },
     credentials: true,
   },
   namespace: '/events',
@@ -51,7 +62,14 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
         return;
       }
 
-      const secret = this.configService.get<string>('JWT_ACCESS_SECRET') || 'sentinelflow-access-jwt-secret-2026';
+      // S3 fix: Use JWT_SECRET (same variable as auth.module.ts JwtModule).
+      // No hardcoded fallback — if secret is missing the connection will fail fast.
+      const secret = this.configService.get<string>('JWT_SECRET');
+      if (!secret) {
+        this.logger.error('JWT_SECRET is not configured. WebSocket connections will be rejected.');
+        client.disconnect();
+        return;
+      }
       const payload = this.jwtService.verify(token, { secret });
 
       // Fetch user and memberships from database

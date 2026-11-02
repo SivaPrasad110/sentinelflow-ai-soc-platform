@@ -1,0 +1,66 @@
+# ==============================================================================
+# SentinelFlow — Production Docker Compose
+#
+# This file is for SELF-HOSTED production deployments only.
+# It does NOT include a postgres service — use a managed database provider:
+#   - Supabase: https://supabase.com
+#   - Railway:  https://railway.app
+#   - Render:   https://render.com/docs/postgresql
+#   - Neon:     https://neon.tech
+#
+# Usage:
+#   cp .env.production.example .env.production
+#   # Fill in all required values in .env.production
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+# ==============================================================================
+
+services:
+  # ─── NestJS API ─────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: sentinelflow-api
+    restart: unless-stopped
+    env_file: .env.production
+    environment:
+      NODE_ENV: production
+    ports:
+      - "127.0.0.1:3000:3000"   # Bind to localhost only — NGINX proxies externally
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/v1/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    networks:
+      - sentinelflow-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ─── React SPA (NGINX) ──────────────────────────────────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: sentinelflow-web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "80:80"
+    networks:
+      - sentinelflow-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  sentinelflow-net:
+    driver: bridge

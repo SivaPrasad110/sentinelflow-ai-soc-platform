@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
@@ -14,6 +14,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { IocModule } from './ioc/ioc.module';
 import { ThreatIntelModule } from './threat-intel/threat-intel.module';
 import { DetectionModule } from './detection/detection.module';
+import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
 
 @Module({
   imports: [
@@ -47,4 +48,10 @@ import { DetectionModule } from './detection/detection.module';
     },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    // O1: Attach correlation ID to every incoming request
+    consumer.apply(CorrelationIdMiddleware).forRoutes('*');
+  }
+}
+
