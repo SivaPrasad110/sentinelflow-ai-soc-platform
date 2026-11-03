@@ -17,6 +17,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { SocketProvider, useSocket } from './context/SocketContext';
 import { secureFetch } from './services/api';
 import { LoginPage } from './components/auth/LoginPage';
+import { RegisterPage } from './components/auth/RegisterPage';
 import { Navbar } from './components/dashboard/Navbar';
 import { IncidentsQueue } from './components/dashboard/IncidentsQueue';
 import { AlertsStream } from './components/dashboard/AlertsStream';
@@ -477,6 +478,7 @@ function Dashboard() {
 
 function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
+  const [authView, setAuthView] = useState<'login' | 'register'>('login');
 
   if (isLoading) {
     return (
@@ -490,7 +492,10 @@ function AppContent() {
   }
 
   if (!isAuthenticated) {
-    return <LoginPage />;
+    if (authView === 'register') {
+      return <RegisterPage onNavigateToLogin={() => setAuthView('login')} />;
+    }
+    return <LoginPage onNavigateToRegister={() => setAuthView('register')} />;
   }
 
   return <Dashboard />;

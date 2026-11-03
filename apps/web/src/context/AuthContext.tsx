@@ -109,7 +109,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } else {
           try {
             const errData = await res.json();
-            if (errData.message) errorMsg = errData.message;
+            if (errData.message) {
+              errorMsg = Array.isArray(errData.message) ? errData.message.join(', ') : errData.message;
+            }
           } catch {
             // fallback
           }
@@ -131,7 +133,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setActiveOrganizationId(activeOrg.organizationId);
       }
     } catch (err: any) {
-      setAuthError(err.message || 'Authentication failed.');
+      const message =
+        err.name === 'TypeError' || err.message === 'Failed to fetch'
+          ? 'Unable to connect to SentinelFlow API. Please verify network connectivity.'
+          : err.message || 'Authentication failed.';
+      setAuthError(message);
       throw err;
     } finally {
       setIsLoading(false);
@@ -157,6 +163,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (!res.ok) {
         let errorMsg = 'Registration failed.';
+        if (res.status === 409) {
+          errorMsg = 'An account with this corporate email or organization already exists.';
+        }
         try {
           const errData = await res.json();
           if (errData.message) {
@@ -182,7 +191,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setActiveOrganizationId(activeOrg.organizationId);
       }
     } catch (err: any) {
-      setAuthError(err.message || 'Registration failed.');
+      const message =
+        err.name === 'TypeError' || err.message === 'Failed to fetch'
+          ? 'Unable to connect to SentinelFlow API. Please verify network connectivity.'
+          : err.message || 'Registration failed.';
+      setAuthError(message);
       throw err;
     } finally {
       setIsLoading(false);

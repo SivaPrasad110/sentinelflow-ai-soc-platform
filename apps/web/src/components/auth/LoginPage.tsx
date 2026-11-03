@@ -8,15 +8,22 @@ import {
   ArrowRight,
   ShieldCheck,
   Building2,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
-export function LoginPage() {
+interface LoginPageProps {
+  onNavigateToRegister?: () => void;
+}
+
+export function LoginPage({ onNavigateToRegister }: LoginPageProps = {}) {
   const { login, isLoading, authError, clearError } = useAuth();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [orgHint, setOrgHint] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -24,21 +31,13 @@ export function LoginPage() {
 
     try {
       await login({
-        email,
+        email: email.trim(),
         password,
         organizationIdHint: orgHint.trim() || undefined,
       });
     } catch {
-      // Error handled by AuthContext state
+      // Error handled by AuthContext state (authError)
     }
-  };
-
-  const handleQuickFill = (demoEmail: string, demoPass: string, demoOrg?: string) => {
-    clearError();
-    setEmail(demoEmail);
-    setPassword(demoPass);
-    if (demoOrg) setOrgHint(demoOrg);
-    else setOrgHint('');
   };
 
   return (
@@ -106,7 +105,7 @@ export function LoginPage() {
                   <Lock className="w-4 h-4" />
                 </div>
                 <input
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   required
                   value={password}
                   onChange={(e) => {
@@ -114,8 +113,16 @@ export function LoginPage() {
                     setPassword(e.target.value);
                   }}
                   placeholder="••••••••••••"
-                  className="w-full pl-10 pr-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition"
+                  className="w-full pl-10 pr-10 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition font-mono"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-500 hover:text-slate-300 transition"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
             </div>
 
@@ -161,40 +168,21 @@ export function LoginPage() {
             </button>
           </form>
 
-          {/* Quick-fill Dev Accounts for local evaluation */}
-          <div className="pt-4 border-t border-slate-800/80 space-y-2.5">
-            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider text-center">
-              Quick Test Accounts (Seeded Roles)
-            </p>
-            <div className="grid grid-cols-3 gap-2">
-              <button
-                type="button"
-                onClick={() => handleQuickFill('sarah.chen@sentinelflow.local', 'AnalystPassword123!', 'org-cyberdefense-001')}
-                className="px-2 py-1.5 bg-slate-800/60 hover:bg-slate-800 border border-slate-700/60 hover:border-emerald-500/50 rounded-lg text-left transition"
-              >
-                <div className="text-[10px] font-bold text-emerald-400">Analyst</div>
-                <div className="text-[9px] text-slate-400 truncate">Sarah Chen</div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleQuickFill('viewer@sentinelflow.local', 'ViewerPassword123!', 'org-cyberdefense-001')}
-                className="px-2 py-1.5 bg-slate-800/60 hover:bg-slate-800 border border-slate-700/60 hover:border-sky-500/50 rounded-lg text-left transition"
-              >
-                <div className="text-[10px] font-bold text-sky-400">Viewer</div>
-                <div className="text-[9px] text-slate-400 truncate">Read-Only</div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleQuickFill('admin@sentinelflow.local', 'AdminPassword123!', 'org-cyberdefense-001')}
-                className="px-2 py-1.5 bg-slate-800/60 hover:bg-slate-800 border border-slate-700/60 hover:border-purple-500/50 rounded-lg text-left transition"
-              >
-                <div className="text-[10px] font-bold text-purple-400">Admin</div>
-                <div className="text-[9px] text-slate-400 truncate">Full Access</div>
-              </button>
+          {/* Navigation to Registration */}
+          {onNavigateToRegister && (
+            <div className="pt-4 border-t border-slate-800/80 text-center">
+              <p className="text-xs text-slate-400">
+                Need to onboard a new organization?{' '}
+                <button
+                  type="button"
+                  onClick={onNavigateToRegister}
+                  className="text-emerald-400 hover:text-emerald-300 font-semibold hover:underline underline-offset-4 transition"
+                >
+                  Register SOC
+                </button>
+              </p>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Security Notice */}
