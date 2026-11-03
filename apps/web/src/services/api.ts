@@ -10,6 +10,64 @@ let currentOrganizationId: string | null = null;
 let refreshPromise: Promise<string | null> | null = null;
 let onSessionExpiredCallback: (() => void) | null = null;
 
+/**
+ * Resolves the API base URL from Vite environment variables (import.meta.env.VITE_API_BASE_URL).
+ * Strips any trailing slashes.
+ * If unset or empty, returns empty string to allow relative paths in dev/tests.
+ */
+export function getApiBaseUrl(): string {
+  const envUrl = (import.meta.env?.VITE_API_BASE_URL || '').trim();
+  return envUrl.replace(/\/+$/, '');
+}
+
+/**
+ * Builds a fully qualified API URL.
+ * Handles:
+ * 1. Empty/undefined VITE_API_BASE_URL -> returns path as-is (e.g. "/api/v1/incidents").
+ * 2. VITE_API_BASE_URL containing "/api/v1" -> avoids duplicating "/api/v1"
+ *    (e.g., "https://sentinelflow-api-ohio.onrender.com/api/v1" + "/api/v1/auth/login" -> "https://sentinelflow-api-ohio.onrender.com/api/v1/auth/login").
+ * 3. VITE_API_BASE_URL without "/api/v1" -> appends path properly
+ *    (e.g., "https://sentinelflow-api-ohio.onrender.com" + "/api/v1/auth/login" -> "https://sentinelflow-api-ohio.onrender.com/api/v1/auth/login").
+ * 4. Trailing slashes in base URL or missing leading slash in path.
+ */
+export function buildApiUrl(path: string): string {
+  const baseUrl = getApiBaseUrl();
+  if (!baseUrl) {
+    return path;
+  }
+
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+
+  // If baseUrl already ends with /api/v1 and path starts with /api/v1
+  if (baseUrl.endsWith('/api/v1') && normalizedPath.startsWith('/api/v1/')) {
+    return `${baseUrl}${normalizedPath.slice('/api/v1'.length)}`;
+  }
+
+  // If baseUrl does not have /api/v1 and path does not start with /api
+  if (!baseUrl.endsWith('/api/v1') && !normalizedPath.startsWith('/api')) {
+    return `${baseUrl}/api/v1${normalizedPath}`;
+  }
+
+  return `${baseUrl}${normalizedPath}`;
+}
+
+/**
+ * Resolves the Socket.io origin URL for real-time WebSocket connections.
+ * Extracts the origin (scheme + host + port) from VITE_API_BASE_URL, or returns empty string if unset.
+ */
+export function getSocketBaseUrl(): string {
+  const baseUrl = getApiBaseUrl();
+  if (!baseUrl) {
+    return '';
+  }
+  try {
+    const parsed = new URL(baseUrl);
+    return parsed.origin;
+  } catch {
+    return baseUrl.replace(/\/api\/v1\/?$/, '').replace(/\/+$/, '');
+  }
+}
+
 export function setAccessToken(token: string | null) {
   inMemoryAccessToken = token;
 }
@@ -36,7 +94,7 @@ export function setSessionExpiredHandler(handler: () => void) {
  */
 async function performTokenRefresh(): Promise<string | null> {
   try {
-    const res = await fetch('/api/v1/auth/refresh', {
+    const res = await fetch(buildApiUrl('/api/v1/auth/refresh'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -59,6 +117,7 @@ async function performTokenRefresh(): Promise<string | null> {
 }
 
 export async function secureFetch(url: string, options: RequestInit = {}): Promise<Response> {
+  const fullUrl = buildApiUrl(url);
   const headers = new Headers(options.headers || {});
 
   if (!headers.has('Content-Type') && !(options.body instanceof FormData)) {
@@ -80,10 +139,10 @@ export async function secureFetch(url: string, options: RequestInit = {}): Promi
     credentials: 'include',
   };
 
-  let response = await fetch(url, fetchOptions);
+  let response = await fetch(fullUrl, fetchOptions);
 
   // If response is 401 Unauthorized, attempt atomic token refresh
-  if (response.status === 401 && !url.includes('/auth/login') && !url.includes('/auth/refresh')) {
+  if (response.status === 401 && !fullUrl.includes('/auth/login') && !fullUrl.includes('/auth/refresh')) {
     if (!refreshPromise) {
       refreshPromise = performTokenRefresh().finally(() => {
         refreshPromise = null;
@@ -103,7 +162,7 @@ export async function secureFetch(url: string, options: RequestInit = {}): Promi
         retryHeaders.set('x-organization-id', currentOrganizationId);
       }
 
-      response = await fetch(url, {
+      response = await fetch(fullUrl, {
         ...options,
         headers: retryHeaders,
         credentials: 'include',
@@ -479,5 +538,29 @@ export async function dismissFinding(findingId: string, reason?: string) {
     const errorData = await response.json().catch(() => ({}));
     throw new Error(errorData.message || `Failed to dismiss finding (HTTP ${response.status})`);
   }
+  return response.json();
+}
+
+/**
+ * Register a new user and organization.
+ */
+export async function registerUser(payload: {
+  email: string;
+  password: string;
+  name: string;
+  organizationName: string;
+}) {
+  const response = await fetch(buildApiUrl('/api/v1/auth/register'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Registration failed (HTTP ${response.status})`);
+  }
+
   return response.json();
 }

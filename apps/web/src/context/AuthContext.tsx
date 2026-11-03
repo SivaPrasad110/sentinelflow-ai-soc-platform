@@ -5,6 +5,7 @@ import {
   setActiveOrganizationId,
   setSessionExpiredHandler,
   secureFetch,
+  buildApiUrl,
 } from '../services/api';
 
 export interface AuthContextType {
@@ -15,6 +16,7 @@ export interface AuthContextType {
   isLoading: boolean;
   authError: string | null;
   login: (credentials: { email: string; password: string; organizationIdHint?: string }) => Promise<void>;
+  register?: (data: { email: string; password: string; name: string; organizationName: string }) => Promise<void>;
   logout: () => Promise<void>;
   switchOrganization: (organizationId: string) => Promise<void>;
   clearError: () => void;
@@ -45,7 +47,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     async function restoreSession() {
       setIsLoading(true);
       try {
-        const refreshRes = await fetch('/api/v1/auth/refresh', {
+        const refreshRes = await fetch(buildApiUrl('/api/v1/auth/refresh'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
@@ -93,7 +95,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setAuthError(null);
 
     try {
-      const res = await fetch('/api/v1/auth/login', {
+      const res = await fetch(buildApiUrl('/api/v1/auth/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -136,9 +138,60 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const register = async (data: {
+    email: string;
+    password: string;
+    name: string;
+    organizationName: string;
+  }) => {
+    setIsLoading(true);
+    setAuthError(null);
+
+    try {
+      const res = await fetch(buildApiUrl('/api/v1/auth/register'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(data),
+      });
+
+      if (!res.ok) {
+        let errorMsg = 'Registration failed.';
+        try {
+          const errData = await res.json();
+          if (errData.message) {
+            errorMsg = Array.isArray(errData.message) ? errData.message.join(', ') : errData.message;
+          }
+        } catch {
+          // fallback
+        }
+        throw new Error(errorMsg);
+      }
+
+      const resData = await res.json();
+      setAccessToken(resData.accessToken);
+      setUser(resData.user);
+
+      const activeOrg =
+        resData.user.memberships?.find((m: OrganizationMembership) => m.organizationId === resData.user.activeOrganizationId) ||
+        resData.user.memberships?.[0] ||
+        null;
+
+      setActiveOrganization(activeOrg);
+      if (activeOrg) {
+        setActiveOrganizationId(activeOrg.organizationId);
+      }
+    } catch (err: any) {
+      setAuthError(err.message || 'Registration failed.');
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const logout = async () => {
     try {
-      await fetch('/api/v1/auth/logout', {
+      await fetch(buildApiUrl('/api/v1/auth/logout'), {
         method: 'POST',
         credentials: 'include',
       });
@@ -194,6 +247,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isLoading,
         authError,
         login,
+        register,
         logout,
         switchOrganization,
         clearError,

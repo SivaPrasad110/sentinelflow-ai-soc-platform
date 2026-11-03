@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useAuth } from './AuthContext';
-import { getAccessToken } from '../services/api';
+import { getAccessToken, getSocketBaseUrl } from '../services/api';
 
 interface SocketContextType {
   socket: Socket | null;
@@ -35,8 +35,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const token = getAccessToken();
     if (!token) return;
 
-    // Connect to /events namespace on current host
-    const newSocket = io('/events', {
+    // Connect to /events namespace on configured API host or local proxy
+    const socketOrigin = getSocketBaseUrl();
+    const socketNamespace = socketOrigin ? `${socketOrigin}/events` : '/events';
+
+    const newSocket = io(socketNamespace, {
       auth: {
         token,
         organizationId: activeOrganization?.organizationId,

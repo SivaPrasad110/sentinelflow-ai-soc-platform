@@ -5,6 +5,9 @@ import {
   setActiveOrganizationId,
   getActiveOrganizationId,
   secureFetch,
+  getApiBaseUrl,
+  buildApiUrl,
+  getSocketBaseUrl,
 } from '../services/api';
 
 describe('Secure API Client & Token Management', () => {
@@ -12,6 +15,7 @@ describe('Secure API Client & Token Management', () => {
     setAccessToken(null);
     setActiveOrganizationId(null);
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it('should store access token strictly in memory', () => {
@@ -90,5 +94,79 @@ describe('Secure API Client & Token Management', () => {
     // Crucial: Despite 3 concurrent 401s, only 1 refresh call was dispatched!
     expect(refreshCalls).toBe(1);
     expect(getAccessToken()).toBe('new-rotated-token');
+  });
+
+  describe('API Base URL Configuration & Resolution', () => {
+    it('should default to relative paths when VITE_API_BASE_URL is not set', () => {
+      vi.stubEnv('VITE_API_BASE_URL', '');
+      expect(getApiBaseUrl()).toBe('');
+      expect(buildApiUrl('/api/v1/auth/login')).toBe('/api/v1/auth/login');
+      expect(buildApiUrl('/api/v1/incidents')).toBe('/api/v1/incidents');
+      expect(getSocketBaseUrl()).toBe('');
+    });
+
+    it('should correctly resolve endpoints when VITE_API_BASE_URL is set to root origin', () => {
+      vi.stubEnv('VITE_API_BASE_URL', 'https://sentinelflow-api-ohio.onrender.com');
+      expect(getApiBaseUrl()).toBe('https://sentinelflow-api-ohio.onrender.com');
+      expect(buildApiUrl('/api/v1/auth/login')).toBe(
+        'https://sentinelflow-api-ohio.onrender.com/api/v1/auth/login',
+      );
+      expect(buildApiUrl('/api/v1/incidents')).toBe(
+        'https://sentinelflow-api-ohio.onrender.com/api/v1/incidents',
+      );
+      expect(getSocketBaseUrl()).toBe('https://sentinelflow-api-ohio.onrender.com');
+    });
+
+    it('should strip trailing slashes from root VITE_API_BASE_URL', () => {
+      vi.stubEnv('VITE_API_BASE_URL', 'https://sentinelflow-api-ohio.onrender.com/');
+      expect(getApiBaseUrl()).toBe('https://sentinelflow-api-ohio.onrender.com');
+      expect(buildApiUrl('/api/v1/auth/login')).toBe(
+        'https://sentinelflow-api-ohio.onrender.com/api/v1/auth/login',
+      );
+    });
+
+    it('should avoid duplicate /api/v1 when VITE_API_BASE_URL includes /api/v1 prefix', () => {
+      vi.stubEnv('VITE_API_BASE_URL', 'https://sentinelflow-api-ohio.onrender.com/api/v1');
+      expect(getApiBaseUrl()).toBe('https://sentinelflow-api-ohio.onrender.com/api/v1');
+      expect(buildApiUrl('/api/v1/auth/login')).toBe(
+        'https://sentinelflow-api-ohio.onrender.com/api/v1/auth/login',
+      );
+      expect(buildApiUrl('/api/v1/auth/refresh')).toBe(
+        'https://sentinelflow-api-ohio.onrender.com/api/v1/auth/refresh',
+      );
+      expect(buildApiUrl('/api/v1/auth/register')).toBe(
+        'https://sentinelflow-api-ohio.onrender.com/api/v1/auth/register',
+      );
+      expect(buildApiUrl('/api/v1/incidents')).toBe(
+        'https://sentinelflow-api-ohio.onrender.com/api/v1/incidents',
+      );
+      // Socket origin should still extract the server root origin
+      expect(getSocketBaseUrl()).toBe('https://sentinelflow-api-ohio.onrender.com');
+    });
+
+    it('should handle VITE_API_BASE_URL with trailing slash and /api/v1/', () => {
+      vi.stubEnv('VITE_API_BASE_URL', 'https://sentinelflow-api-ohio.onrender.com/api/v1/');
+      expect(getApiBaseUrl()).toBe('https://sentinelflow-api-ohio.onrender.com/api/v1');
+      expect(buildApiUrl('/api/v1/auth/login')).toBe(
+        'https://sentinelflow-api-ohio.onrender.com/api/v1/auth/login',
+      );
+    });
+
+    it('should dispatch secureFetch to the resolved full URL when VITE_API_BASE_URL is configured', async () => {
+      vi.stubEnv('VITE_API_BASE_URL', 'https://sentinelflow-api-ohio.onrender.com/api/v1');
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      );
+
+      await secureFetch('/api/v1/incidents');
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://sentinelflow-api-ohio.onrender.com/api/v1/incidents',
+        expect.objectContaining({
+          credentials: 'include',
+        }),
+      );
+    });
   });
 });
