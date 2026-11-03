@@ -78,4 +78,52 @@ describe('EventsGateway (Phase 5 WebSocket Event Streaming)', () => {
     expect(mockClient.join).toHaveBeenCalledWith('org:org-new-corp');
     expect(res).toEqual({ success: true, organizationId: 'org-new-corp' });
   });
+
+  describe('WebSocket CORS Security Configuration', () => {
+    it('should verify gateway metadata includes credentials: true and secure namespace /events', () => {
+      // Reflect metadata defined by @WebSocketGateway
+      const metadata = Reflect.getMetadata('websockets:gateway_options', EventsGateway);
+      expect(metadata).toBeDefined();
+      expect(metadata.namespace).toBe('/events');
+      expect(metadata.cors).toBeDefined();
+      expect(metadata.cors.credentials).toBe(true);
+      expect(typeof metadata.cors.origin).toBe('function');
+    });
+
+    it('should validate allowed and rejected origins via the gateway CORS callback', (done) => {
+      const metadata = Reflect.getMetadata('websockets:gateway_options', EventsGateway);
+      const corsCallback = metadata.cors.origin;
+
+      // 1. Production Vercel frontend should be permitted
+      corsCallback(
+        'https://sentinelflow-ai-soc-platform-beryl.vercel.app',
+        (err: Error | null, allow?: boolean) => {
+          expect(err).toBeNull();
+          expect(allow).toBe(true);
+
+          // 2. Production Render backend should be permitted
+          corsCallback(
+            'https://sentinelflow-api-ohio.onrender.com',
+            (err2: Error | null, allow2?: boolean) => {
+              expect(err2).toBeNull();
+              expect(allow2).toBe(true);
+
+              // 3. Requests without Origin header should be permitted
+              corsCallback(undefined, (err3: Error | null, allow3?: boolean) => {
+                expect(err3).toBeNull();
+                expect(allow3).toBe(true);
+
+                // 4. Unauthorized origins should be rejected with Error
+                corsCallback('https://evil-unauthorized-site.com', (err4: Error | null) => {
+                  expect(err4).toBeInstanceOf(Error);
+                  expect(err4?.message).toContain('WebSocket CORS: origin "https://evil-unauthorized-site.com" not allowed');
+                  done();
+                });
+              });
+            },
+          );
+        },
+      );
+    });
+  });
 });

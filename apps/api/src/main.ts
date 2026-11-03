@@ -4,13 +4,15 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import * as cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
+import { parseAllowedOrigins, createCorsOriginCallback } from './common/cors.utils';
 
 async function bootstrap() {
   const logger = new Logger('SentinelFlowBootstrap');
   const app = await NestFactory.create(AppModule);
 
   const port = process.env.PORT || 3000;
-  const corsOrigin = process.env.CORS_ORIGIN || 'http://localhost:5173';
+  const allowedOrigins = parseAllowedOrigins(process.env.CORS_ORIGIN);
+  logger.log(`Configured CORS allowed origins: ${allowedOrigins.join(', ')}`);
 
   // ── Security Headers (Helmet) ──────────────────────────────────────────────
   // Must be registered before CORS and routes.
@@ -37,17 +39,9 @@ async function bootstrap() {
   );
 
   // ── CORS (origin whitelist — never wildcard) ────────────────────────────────
-  // S2 fix: CORS_ORIGIN must be set explicitly; no wildcard fallback in prod.
+  // Enforces exact origin match against allowedOrigins; permits server-to-server requests without Origin header.
   app.enableCors({
-    origin: (origin, callback) => {
-      // Allow same-origin requests (no origin header) and exact whitelisted origins
-      const allowed = corsOrigin.split(',').map((o) => o.trim());
-      if (!origin || allowed.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error(`CORS: Origin "${origin}" not allowed`));
-      }
-    },
+    origin: createCorsOriginCallback(allowedOrigins),
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-organization-id', 'x-tenant-id'],

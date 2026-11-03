@@ -12,6 +12,7 @@ import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
+import { parseAllowedOrigins, createWsCorsOriginCallback } from '../common/cors.utils';
 
 interface AuthenticatedSocket extends Socket {
   userId?: string;
@@ -20,20 +21,13 @@ interface AuthenticatedSocket extends Socket {
   orgMemberships?: string[];
 }
 
-// S2 fix: WebSocket CORS reads the same CORS_ORIGIN env var as the HTTP server.
-// Supports comma-separated origins for multi-domain deployments.
-const wsOriginEnv = process.env.CORS_ORIGIN || 'http://localhost:5173';
-const wsAllowedOrigins = wsOriginEnv.split(',').map((o) => o.trim());
+// WebSocket CORS reads the same CORS_ORIGIN configuration as the HTTP server.
+// Supports comma-separated origins, trailing slash normalization, and exact matching.
+const wsAllowedOrigins = parseAllowedOrigins(process.env.CORS_ORIGIN);
 
 @WebSocketGateway({
   cors: {
-    origin: (origin: string, callback: (err: Error | null, allow?: boolean) => void) => {
-      if (!origin || wsAllowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error(`WebSocket CORS: origin "${origin}" not allowed`));
-      }
-    },
+    origin: createWsCorsOriginCallback(wsAllowedOrigins),
     credentials: true,
   },
   namespace: '/events',
